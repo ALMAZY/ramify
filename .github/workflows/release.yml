@@ -1,0 +1,87 @@
+name: Release
+
+# Push a tag like v0.2.0 to build installers for every platform and publish a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # one universal .dmg (Apple Silicon + Intel)
+            args: --target universal-apple-darwin
+          - platform: windows-latest # .msi + setup .exe
+            args: ""
+          - platform: ubuntu-22.04 # x64 .deb, .rpm, .AppImage
+            args: ""
+          - platform: ubuntu-22.04-arm # arm64 .deb, .rpm, .AppImage
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - run: npm ci
+      - run: npm test
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Ramify ${{ github.ref_name }}"
+          releaseBody: |
+            **macOS:** `brew tap almazy/tap && brew trust almazy/tap && brew install --cask ramify`, or download the `.dmg`.
+            **Windows:** download the `.msi` or `-setup.exe`.
+            **Linux:** `.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE) or `.AppImage` (any distro).
+
+            The builds are not signed with a paid certificate yet. See the README for the one-time "Open anyway" step.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  homebrew:
+    # Updates the cask in ALMAZY/homebrew-tap. Needs a TAP_TOKEN secret (see README → Maintainers).
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Homebrew cask
+        if: env.TAP_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          gh auth setup-git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash scripts/update-cask.sh "${GITHUB_REF_NAME}"
+      - name: Skip note
+        if: env.TAP_TOKEN == ''
+        run: echo "TAP_TOKEN not set; run scripts/update-cask.sh ${GITHUB_REF_NAME} locally to update the cask."
