@@ -12,7 +12,7 @@
 // Import also accepts ## / ### headings, *, +, 1. bullets, tabs, and plain
 // continuation lines, so most Markdown notes open as a sensible map.
 
-import { MapNode, makeNode, Shape, SHAPES } from "./model";
+import { MapNode, makeNode, Plan, Shape, SHAPES } from "./model";
 import { SHAPE_ALIASES } from "./shapes";
 import { isValidColor } from "./colors";
 
@@ -35,7 +35,12 @@ const COLOR_RE = /<!--\s*color:\s*([#\w]+)\s*-->/i;
 
 const SHAPE_RE = /<!--\s*shape:\s*(\w+)\s*-->/i;
 const CALLOUT_RE = /<!--\s*callout:\s*([\s\S]*?)\s*-->/i;
-const LINK_RE = /<!--\s*link:\s*([\w-]+)\s*-->/gi;
+const LINK_RE = /<!--\s*link:\s*([\w-]+)(?:\s*:\s*([\s\S]*?))?\s*-->/gi;
+const PLAN_RE = /<!--\s*plan:\s*([\s\S]*?)\s*-->/i;
+const LABELS_RE = /<!--\s*labels:\s*([\s\S]*?)\s*-->/i;
+const BOUNDARY_RE = /<!--\s*boundary(?:\s*:\s*([\s\S]*?))?\s*-->/i;
+const SUMMARY_RE = /<!--\s*summary:\s*(\d+)\s*-->/i;
+const XREF_RE = /<!--\s*xref:\s*([\s\S]*?)\s*-->/i;
 const ANCHOR_RE = /\s\^([A-Za-z0-9-]+)\s*$/;
 
 interface Meta {
@@ -44,7 +49,13 @@ interface Meta {
   shape?: Shape;
   anchor?: string;
   links?: string[];
+  linkLabels?: Record<string, string>;
   callout?: string;
+  plan?: Plan;
+  labels?: string[];
+  boundary?: string;
+  summary?: number;
+  xref?: string;
 }
 
 function applyMeta(n: MapNode, m: Meta) {
@@ -53,10 +64,56 @@ function applyMeta(n: MapNode, m: Meta) {
   if (m.shape) n.shape = m.shape;
   if (m.anchor) n.anchor = m.anchor;
   if (m.links?.length) n.links = m.links;
+  if (m.linkLabels) n.linkLabels = m.linkLabels;
   if (m.callout) n.callout = m.callout;
+  if (m.plan) n.plan = m.plan;
+  if (m.labels?.length) n.labels = m.labels;
+  if (m.boundary !== undefined) n.boundary = m.boundary;
+  if (m.summary) n.summary = m.summary;
+  if (m.xref) n.xref = m.xref;
 }
 
-function cleanText(raw: string): { text: string; collapsed: boolean; color?: string; shape?: Shape; anchor?: string; links?: string[]; callout?: string } {
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** "progress=40;priority=2;start=2026-09-20;due=2026-11-18;who=Ann;after=a1,b2" */
+export function parsePlan(s: string): Plan | undefined {
+  const p: Plan = {};
+  for (const part of s.split(";")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const k = part.slice(0, i).trim().toLowerCase();
+    const v = part.slice(i + 1).trim();
+    if (!v) continue;
+    if (k === "progress" && /^\d+$/.test(v)) p.progress = Math.max(0, Math.min(100, Number(v)));
+    else if (k === "priority" && /^[1-5]$/.test(v)) p.priority = Number(v);
+    else if (k === "start" && DATE_RE.test(v)) p.start = v;
+    else if (k === "due" && DATE_RE.test(v)) p.due = v;
+    else if (k === "who") p.who = v;
+    else if (k === "after") {
+      const a = v.split(",").map((x) => x.trim()).filter((x) => /^[\w-]+$/.test(x));
+      if (a.length) p.after = a;
+    }
+  }
+  return Object.keys(p).length ? p : undefined;
+}
+
+export function planToString(p: Plan): string {
+  const out: string[] = [];
+  if (p.progress !== undefined) out.push(`progress=${p.progress}`);
+  if (p.priority) out.push(`priority=${p.priority}`);
+  if (p.start) out.push(`start=${p.start}`);
+  if (p.due) out.push(`due=${p.due}`);
+  if (p.who) out.push(`who=${markerText(p.who).replace(/[;=]/g, ",")}`);
+  if (p.after?.length) out.push(`after=${p.after.join(",")}`);
+  return out.join(";");
+}
+
+/** Text that is safe inside an HTML comment marker. */
+function markerText(s: string): string {
+  return s.replace(/\s+/g, " ").replace(/--+>?/g, "—").trim();
+}
+
+function cleanText(raw: string): { text: string; collapsed: boolean; color?: string; shape?: Shape; anchor?: string; links?: string[]; callout?: string } & Meta {
   let t = raw;
   let callout: string | undefined;
   const co = t.match(CALLOUT_RE);
@@ -64,13 +121,42 @@ function cleanText(raw: string): { text: string; collapsed: boolean; color?: str
     callout = co[1].trim() || undefined;
     t = t.replace(CALLOUT_RE, "");
   }
+  const extra: Meta = {};
+  const pm = t.match(PLAN_RE);
+  if (pm) {
+    extra.plan = parsePlan(pm[1]);
+    t = t.replace(PLAN_RE, "");
+  }
+  const lm = t.match(LABELS_RE);
+  if (lm) {
+    const ls = lm[1].split("|").map((x) => x.trim()).filter(Boolean);
+    if (ls.length) extra.labels = ls;
+    t = t.replace(LABELS_RE, "");
+  }
+  const bm = t.match(BOUNDARY_RE);
+  if (bm) {
+    extra.boundary = (bm[1] ?? "").trim();
+    t = t.replace(BOUNDARY_RE, "");
+  }
+  const sm2 = t.match(SUMMARY_RE);
+  if (sm2) {
+    const k = Number(sm2[1]);
+    if (k > 0) extra.summary = k;
+    t = t.replace(SUMMARY_RE, "");
+  }
+  const xm = t.match(XREF_RE);
+  if (xm) {
+    if (xm[1].includes("#")) extra.xref = xm[1].trim();
+    t = t.replace(XREF_RE, "");
+  }
   let collapsed = false;
   let color: string | undefined;
   let shape: Shape | undefined;
   let anchor: string | undefined;
   const links: string[] = [];
-  t = t.replace(LINK_RE, (_m, a: string) => {
+  t = t.replace(LINK_RE, (_m, a: string, label?: string) => {
     links.push(a);
+    if (label?.trim()) (extra.linkLabels ??= {})[a] = label.trim();
     return "";
   });
   const sm = t.match(SHAPE_RE);
@@ -97,7 +183,7 @@ function cleanText(raw: string): { text: string; collapsed: boolean; color?: str
   }
   t = t.replace(/<br\s*\/?>/gi, "\n").trim();
   if (/^\\\[[ xX]\]\s/.test(t)) t = t.slice(1);
-  return { text: t, collapsed, color, shape, anchor, links: links.length ? links : undefined, callout };
+  return { ...extra, text: t, collapsed, color, shape, anchor, links: links.length ? links : undefined, callout };
 }
 
 export function parseMarkdown(src: string, fallbackTitle = "Untitled"): ParsedDoc {
@@ -230,14 +316,25 @@ export function parseMarkdown(src: string, fallbackTitle = "Untitled"): ParsedDo
 }
 
 /** Hidden markers after a topic's text. The ^anchor (Obsidian block id) must come last. */
-function suffix(n: MapNode, withFold: boolean): string {
+function suffix(n: MapNode, withFold: boolean, withAnchor = true): string {
   let s = "";
   if (withFold && n.collapsed && n.children.length) s += " " + COLLAPSED;
   if (n.color) s += ` <!--color:${n.color}-->`;
   if (n.shape) s += ` <!--shape:${n.shape}-->`;
-  for (const l of n.links ?? []) s += ` <!--link:${l}-->`;
-  if (n.callout) s += ` <!--callout:${n.callout.replace(/\s+/g, " ").replace(/--+>?/g, "—")}-->`;
-  if (n.anchor) s += ` ^${n.anchor}`;
+  for (const l of n.links ?? []) {
+    const lab = n.linkLabels?.[l];
+    s += lab ? ` <!--link:${l}: ${markerText(lab)}-->` : ` <!--link:${l}-->`;
+  }
+  if (n.callout) s += ` <!--callout:${markerText(n.callout)}-->`;
+  if (n.plan) {
+    const ps = planToString(n.plan);
+    if (ps) s += ` <!--plan:${ps}-->`;
+  }
+  if (n.labels?.length) s += ` <!--labels:${n.labels.map((l) => markerText(l).replace(/\|/g, "/")).join("|")}-->`;
+  if (n.boundary !== undefined) s += n.boundary ? ` <!--boundary:${markerText(n.boundary)}-->` : " <!--boundary-->";
+  if (n.summary) s += ` <!--summary:${n.summary}-->`;
+  if (n.xref) s += ` <!--xref:${markerText(n.xref)}-->`;
+  if (n.anchor && withAnchor) s += ` ^${n.anchor}`;
   return s;
 }
 
@@ -310,7 +407,7 @@ export function branchToMarkdown(n: MapNode): string {
   const out: string[] = [];
   const rec = (x: MapNode, depth: number) => {
     const box = x.task === "todo" ? "[ ] " : x.task === "done" ? "[x] " : "";
-    out.push(`${"  ".repeat(depth)}- ${box}${escItem(x.text)}${x.color ? ` <!--color:${x.color}-->` : ""}${x.shape ? ` <!--shape:${x.shape}-->` : ""}`);
+    out.push(`${"  ".repeat(depth)}- ${box}${escItem(x.text)}${suffix(x, false, false)}`);
     if (x.note.trim()) out.push(...quote(x.note, "  ".repeat(depth + 1)));
     x.children.forEach((c) => rec(c, depth + 1));
   };

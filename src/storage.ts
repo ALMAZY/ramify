@@ -46,6 +46,8 @@ export interface Store {
   /** Copy files given by absolute path (drag and drop) into attachments. */
   attachPaths(paths: string[]): Promise<string[]>;
   readBytes(rel: string): Promise<Uint8Array>;
+  /** Write a binary file relative to the maps folder (desktop only). */
+  writeBytes(rel: string, data: Uint8Array): Promise<void>;
   openFile(rel: string): Promise<void>;
   /** True when files live on disk and can be shown in Finder / Explorer. */
   canReveal(): boolean;
@@ -143,6 +145,12 @@ class DesktopStore implements Store {
   }
   canReveal() {
     return true;
+  }
+  async writeBytes(rel: string, data: Uint8Array) {
+    const p = this.path(rel);
+    const dir = p.slice(0, Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")));
+    if (dir) await this.invoke("make_dir", { path: dir });
+    await this.invoke("write_base64", { path: p, data: toBase64(data) });
   }
   async exportFile(defaultName: string, data: string | Uint8Array, filter: FileFilter) {
     const { save } = await import("@tauri-apps/plugin-dialog");
@@ -254,6 +262,9 @@ class BrowserStore implements Store {
     const v = localStorage.getItem(ATT_PREFIX + rel);
     if (v == null) throw new Error("Not found: " + rel);
     return fromBase64(v);
+  }
+  async writeBytes(_rel: string, _data: Uint8Array) {
+    throw new Error("Not available in the browser");
   }
   canReveal() {
     return false;

@@ -38,6 +38,7 @@
           <span id="save-state"></span>
           <div class="toolbar">
             <button id="tb-outline" class="tb-btn" data-icon="list" title="Outline view (⌘2)"></button>
+            <button id="tb-gantt" class="tb-btn" data-icon="gantt" title="Gantt chart (⌘3)"></button>
             <button id="palette-btn" class="tb-btn" data-icon="command" title="Commands (⌘K)"></button>
             <button id="tb-search" class="tb-btn" data-icon="search" title="Find in map (⌘F)"></button>
             <span class="tb-sep"></span>
@@ -58,6 +59,7 @@
             <div id="empty-hint" hidden></div>
           </div>
           <div id="outline-view" class="view" hidden></div>
+          <div id="gantt-view" class="view" hidden></div>
           <div id="zoombar">
             <div class="zb-group">
               <button id="zb-out" data-icon="minus" title="Zoom out (⌘−)"></button>
@@ -98,6 +100,30 @@
             <h4>Content</h4>
             <div id="in-actions"></div>
           </section>
+          <section class="in-sec" id="in-task">
+            <div class="in-row">
+              <h4>Task</h4>
+              <span class="spacer"></span>
+              <button id="t-clear" class="mini-btn" title="Remove task details">Remove</button>
+            </div>
+            <button class="in-act" id="t-add"></button>
+            <div class="task-grid" id="t-fields">
+              <span class="tl">Progress</span>
+              <div class="t-prog"><input type="range" id="t-progress" min="0" max="100" step="5" /><span id="t-progress-val"></span><button id="t-auto" class="mini-btn" title="Work it out from the sub-tasks">Auto</button></div>
+              <span class="tl">Priority</span>
+              <div class="seg pri" id="t-priority"></div>
+              <span class="tl">Start</span>
+              <input type="date" id="t-start" class="t-in" />
+              <span class="tl">Due</span>
+              <input type="date" id="t-due" class="t-in" />
+              <span class="tl">Duration</span>
+              <div class="t-days"><input type="number" id="t-days" class="t-in" min="1" max="3650" /><span>days</span></div>
+              <span class="tl">Assignee</span>
+              <input id="t-who" class="t-in" placeholder="Name" />
+              <span class="tl">After</span>
+              <div id="t-after" class="t-after"></div>
+            </div>
+          </section>
           <section class="in-sec in-notes">
             <div class="in-row">
               <h4>Notes</h4>
@@ -112,6 +138,12 @@
             <h4>Map</h4>
             <div class="in-label"><span>Layout</span><span id="in-layout-name"></span></div>
             <div class="seg-icons" id="in-layouts"></div>
+            <div class="in-label"><span>Lines</span></div>
+            <div class="seg wide three" id="in-lines">
+              <button data-lines="curved">Curved</button>
+              <button data-lines="elbow">Elbow</button>
+              <button data-lines="straight">Straight</button>
+            </div>
             <div class="in-label"><span>Topic style</span></div>
             <div class="seg wide" id="in-mapstyle">
               <button data-style="filled">Filled</button>

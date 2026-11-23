@@ -21,10 +21,9 @@ export function setAutoCheck(on: boolean) {
   localStorage.setItem(AUTO_KEY, on ? "on" : "off");
 }
 
+/** Version baked in at build time from package.json (no IPC, never fails). */
 export async function appVersion(): Promise<string> {
-  if (!isDesktop()) return import.meta.env.VITE_APP_VERSION ?? "dev";
-  const { getVersion } = await import("@tauri-apps/api/app");
-  return getVersion();
+  return import.meta.env.VITE_APP_VERSION ?? "dev";
 }
 
 export class Updater {

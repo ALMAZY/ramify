@@ -3,7 +3,7 @@
 // read from the rendered map, so the export matches the screen and theme.
 
 import type { App } from "./app";
-import { edgePath, bounds } from "./layout";
+import { edgePath, bounds, boundaryBoxes } from "./layout";
 import { routeLinks } from "./router";
 import { MapNode, find } from "./model";
 import { hexColor } from "./colors";
@@ -71,6 +71,17 @@ export function exportSVG(app: App): string {
   parts.push(`<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="${muted}"/></marker></defs>`);
   parts.push(`<rect width="100%" height="100%" fill="${canvas}"/>`);
   parts.push(`<g transform="translate(${ox},${oy})">`);
+  // Boundaries (behind everything)
+  for (const bx of boundaryBoxes(app.top, boxes)) {
+    const c = color(bx.id);
+    parts.push(`<rect x="${bx.x}" y="${bx.y}" width="${bx.w}" height="${bx.h}" rx="10" fill="${c}" fill-opacity="0.07" stroke="${c}" stroke-opacity="0.75" stroke-width="1.5" stroke-dasharray="6 4"/>`);
+    const tab = mv.edgesSvg().querySelector<SVGGElement>(`g.bnd-tab rect[x="${bx.x + 10}"]`)?.parentElement;
+    if (bx.label && tab) {
+      const r = tab.querySelector("rect")!,
+        t = tab.querySelector("text")!;
+      parts.push(`<rect x="${r.getAttribute("x")}" y="${r.getAttribute("y")}" width="${r.getAttribute("width")}" height="22" rx="6" fill="${c}"/><text x="${t.getAttribute("x")}" y="${t.getAttribute("y")}" font-size="12" font-weight="600" fill="#fff">${esc(t.textContent ?? "")}</text>`);
+    }
+  }
   for (const [id, b] of boxes) {
     if (!b.parent) continue;
     const p = boxes.get(b.parent)!;
@@ -81,6 +92,13 @@ export function exportSVG(app: App): string {
   routeLinks(boxes, reqs, mv.foldDots()).forEach((d) => {
     if (d) parts.push(`<path d="${d}" fill="none" stroke="${muted}" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arrow)"/>`);
   });
+  mv.edgesSvg()
+    .querySelectorAll<SVGTextElement>("text.xlabel")
+    .forEach((t) =>
+      parts.push(
+        `<text x="${t.getAttribute("x")}" y="${t.getAttribute("y")}" text-anchor="middle" font-size="12" font-weight="500" fill="${muted}" stroke="${canvas}" stroke-width="5" stroke-linejoin="round" paint-order="stroke">${esc(t.textContent ?? "")}</text>`,
+      ),
+    );
   for (const [id, b] of boxes) {
     const n = find(app.root, id)?.node;
     const el = mv.elementFor(id);
@@ -120,6 +138,7 @@ export function exportSVG(app: App): string {
     if (chip && chip.offsetParent && chip.textContent) {
       parts.push(`<text x="${b.x + chip.offsetLeft}" y="${b.y + chip.offsetTop + chip.offsetHeight / 2}" dominant-baseline="central" font-size="11" fill="${getComputedStyle(chip).color}">${esc(chip.textContent)}</text>`);
     }
+    parts.push(...planParts(el, b.x, b.y));
     const dot = el.querySelector<HTMLElement>(".ndot");
     if (dot && dot.offsetParent) parts.push(`<circle cx="${b.x + dot.offsetLeft + 3}" cy="${b.y + dot.offsetTop + 3}" r="3" fill="${fg}" fill-opacity="0.8"/>`);
     if (n.collapsed && n.children.length) {
@@ -148,7 +167,7 @@ export function exportSVG(app: App): string {
   return parts.join("\n");
 }
 
-async function svgToCanvas(svg: string, scale: number): Promise<{ canvas: HTMLCanvasElement; w: number; h: number }> {
+export async function svgToCanvas(svg: string, scale: number): Promise<{ canvas: HTMLCanvasElement; w: number; h: number }> {
   const m = svg.match(/width="(\d+)" height="(\d+)"/)!;
   const w = Number(m[1]),
     h = Number(m[2]);
@@ -229,4 +248,59 @@ export function exportText(top: MapNode): string {
   };
   rec(top, 0);
   return out.join("\n") + "\n";
+}
+
+/** Priority badge, progress bar, dates, assignee and labels, as drawn on screen. */
+function planParts(el: HTMLElement, bx: number, by: number): string[] {
+  const out: string[] = [];
+  const at = (e: HTMLElement) => ({ x: bx + e.offsetLeft, y: by + e.offsetTop, w: e.offsetWidth, h: e.offsetHeight });
+  const vis = (e: HTMLElement | null): e is HTMLElement => !!e && !!e.offsetParent;
+  const txt = (e: HTMLElement, size: number, weight = "400") => {
+    const r = at(e);
+    const cs = getComputedStyle(e);
+    const pl = parseFloat(cs.paddingLeft) || 0;
+    return `<text x="${r.x + pl}" y="${r.y + r.h / 2}" dominant-baseline="central" font-size="${size}" font-weight="${weight}" fill="${cs.color}">${esc(e.textContent ?? "")}</text>`;
+  };
+  const pill = (e: HTMLElement) => {
+    const r = at(e);
+    const cs = getComputedStyle(e);
+    const bg = cs.backgroundColor;
+    const border = cs.borderTopWidth !== "0px" ? ` stroke="${cs.borderTopColor}"` : "";
+    if (bg && bg !== "rgba(0, 0, 0, 0)") out.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${Math.min(9, r.h / 2)}" fill="${bg}"${border}/>`);
+    else if (border) out.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="5" fill="none"${border}/>`);
+  };
+  const pri = el.querySelector<HTMLElement>(".pri");
+  if (vis(pri)) {
+    pill(pri);
+    const r = at(pri);
+    out.push(`<text x="${r.x + r.w / 2}" y="${r.y + r.h / 2}" text-anchor="middle" dominant-baseline="central" font-size="10.5" font-weight="700" fill="#fff">${esc(pri.textContent ?? "")}</text>`);
+  }
+  el.querySelectorAll<HTMLElement>(".pbar").forEach((bar) => {
+    if (!vis(bar)) return;
+    const r = at(bar);
+    const col = getComputedStyle(bar).color;
+    const fill = bar.querySelector<HTMLElement>("i");
+    out.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="3" fill="${col}" fill-opacity="0.18"/>`);
+    if (fill) out.push(`<rect x="${r.x}" y="${r.y}" width="${fill.offsetWidth}" height="${r.h}" rx="3" fill="${col}" fill-opacity="0.75"/>`);
+  });
+  el.querySelectorAll<HTMLElement>(".ppct, .pdates").forEach((e) => vis(e) && out.push(txt(e, 11.5)));
+  el.querySelectorAll<HTMLElement>(".pdays").forEach((e) => {
+    if (!vis(e)) return;
+    const r = at(e);
+    out.push(`<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="8" fill="${getComputedStyle(e).color}" fill-opacity="0.12"/>`);
+    out.push(txt(e, 11.5));
+  });
+  el.querySelectorAll<HTMLElement>(".pwho").forEach((e) => {
+    if (!vis(e)) return;
+    const b = e.querySelector<HTMLElement>("b");
+    const r = at(e);
+    if (b) out.push(`<circle cx="${r.x + 8}" cy="${r.y + r.h / 2}" r="8" fill="#6e56cf"/><text x="${r.x + 8}" y="${r.y + r.h / 2}" text-anchor="middle" dominant-baseline="central" font-size="9.5" fill="#fff">${esc(b.textContent ?? "")}</text>`);
+    out.push(`<text x="${r.x + 21}" y="${r.y + r.h / 2}" dominant-baseline="central" font-size="11.5" fill="${getComputedStyle(e).color}">${esc((e.textContent ?? "").slice(b?.textContent?.length ?? 0))}</text>`);
+  });
+  el.querySelectorAll<HTMLElement>(".labels span").forEach((e) => {
+    if (!vis(e)) return;
+    pill(e);
+    out.push(txt(e, 11));
+  });
+  return out;
 }

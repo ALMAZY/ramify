@@ -7,7 +7,7 @@ import { parseMarkdown, serializeMarkdown, branchToMarkdown, parsePastedText, he
 import { toOPML } from "./opml";
 import { Store, MapEntry, createStore, fileNameFor, dirOf, baseOf, relLink, isImage, resolveLink } from "./storage";
 import { chord, prettyChord } from "./keys";
-import { LayoutKind, LAYOUTS } from "./layout";
+import { LayoutKind, LAYOUTS, LINE_STYLES, LineStyle } from "./layout";
 import { MapView } from "./mapview";
 import { OutlineView } from "./outline";
 import { Palette, PaletteItem } from "./palette";
@@ -25,6 +25,9 @@ import { icon } from "./ui-icons";
 import { showMenu } from "./menu";
 import { Updater, autoCheckEnabled, setAutoCheck, appVersion, RELEASES_URL } from "./updater";
 import { openExternal } from "./notes";
+import { attachListEditing } from "./listedit";
+import { TaskUI } from "./tasks-ui";
+import { GanttView } from "./gantt";
 
 export interface Command {
   id: string;
@@ -39,7 +42,7 @@ export interface Command {
   noHelp?: boolean;
 }
 
-type View = "map" | "outline";
+type View = "map" | "outline" | "gantt";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -57,6 +60,8 @@ export class App {
   frontmatter = "";
   fileName: string | null = null;
   sel: string | null = null;
+  /** Extra topics picked with Shift-click (summary over siblings, chaining tasks). */
+  extra = new Set<string>();
   editing: string | null = null;
   focusId: string | null = null;
   view: View = "map";
@@ -75,6 +80,7 @@ export class App {
   mapStyle: "filled" | "outline" = "filled";
   presenter = new Presenter(this);
   updater = new Updater(this);
+  tasks = new TaskUI(this);
 
   history = new History();
   maps: MapEntry[] = [];
@@ -87,6 +93,7 @@ export class App {
 
   mapView!: MapView;
   outline!: OutlineView;
+  gantt!: GanttView;
   palette!: Palette;
   commands: Command[] = [];
   private byChord = new Map<string, Command[]>();
@@ -96,6 +103,7 @@ export class App {
     this.loadPrefs();
     this.mapView = new MapView(this, $("map-view"));
     this.outline = new OutlineView(this, $("outline-view"));
+    this.gantt = new GanttView(this, $("gantt-view"));
     this.palette = new Palette();
     this.buildCommands();
     this.wireChrome();
@@ -171,6 +179,19 @@ export class App {
     return this.mapLayout ?? this.defaultLayout;
   }
 
+  /** Branch line style, stored in the map's front matter (ramify-lines). */
+  get lines(): LineStyle {
+    const m = this.frontmatter.match(/^ramify-lines:\s*(\w+)\s*$/m);
+    return m && LINE_STYLES.some((l) => l.id === m[1]) ? (m[1] as LineStyle) : "curved";
+  }
+
+  setLines(s: LineStyle) {
+    if (s === this.lines) return;
+    this.frontmatter = setFrontmatter(this.frontmatter, "ramify-lines", s);
+    this.markDirty();
+    this.render();
+  }
+
   /** Set this map's layout (stored in its front matter) and make it the default for new maps. */
   setLayout(k: LayoutKind) {
     this.mapLayout = k;
@@ -239,8 +260,16 @@ export class App {
     }
   }
 
-  select(id: string | null, opts: { scroll?: boolean } = {}) {
+  select(id: string | null, opts: { scroll?: boolean; add?: boolean } = {}) {
     if (this.editing && this.editing !== id) this.stopEdit();
+    if (opts.add && id && this.sel && id !== this.sel) {
+      // Shift-click: add or remove a topic from the extra selection.
+      if (this.extra.has(id)) this.extra.delete(id);
+      else this.extra.add(id);
+      this.renderSelection();
+      return;
+    }
+    this.extra.clear();
     this.sel = id;
     this.renderSelection();
     if (opts.scroll !== false && id) this.mapView.ensureVisible(id);
@@ -484,6 +513,13 @@ export class App {
     const cur = this.sel ?? this.top.id;
     const n = this.node(cur);
     if (!n) return;
+    if (this.view === "gantt") {
+      const order = this.gantt.rowIds();
+      const i = order.indexOf(cur);
+      if (dir === "up") this.select(order[Math.max(0, i - 1)] ?? order[0]);
+      if (dir === "down") this.select(order[Math.min(order.length - 1, i + 1)] ?? order[0]);
+      return;
+    }
     if (this.view === "outline") {
       const order = visibleOrder(this.top);
       const i = order.findIndex((x) => x.id === cur);
@@ -513,7 +549,10 @@ export class App {
     const app = $("app");
     app.classList.toggle("no-sidebar", !this.sidebarOpen);
     app.classList.toggle("outline", this.view === "outline");
+    app.classList.toggle("gantt", this.view === "gantt");
     $("tb-outline").classList.toggle("on", this.view === "outline");
+    $("tb-gantt").classList.toggle("on", this.view === "gantt");
+    $("gantt-view").hidden = this.view !== "gantt";
     $("tb-panel").classList.toggle("on", this.notesOpen);
     $("notes").hidden = !this.notesOpen;
     $("notes").classList.toggle("notes-full", this.notesFull);
@@ -521,6 +560,7 @@ export class App {
     $("outline-view").hidden = this.view !== "outline";
     document.querySelectorAll<HTMLButtonElement>("#view-seg button").forEach((b) => b.classList.toggle("on", b.dataset.view === this.view));
     if (this.view === "map") this.mapView.render();
+    else if (this.view === "gantt") this.gantt.render();
     else this.outline.render();
     this.renderCrumbs();
     this.renderNotes();
@@ -529,6 +569,7 @@ export class App {
 
   renderSelection() {
     if (this.view === "map") this.mapView.renderSelection();
+    else if (this.view === "gantt") this.gantt.renderSelection();
     else this.outline.renderSelection();
     this.renderNotes();
   }
@@ -933,6 +974,11 @@ export class App {
     this.toast("Imported " + f.name);
   }
 
+  /** The map as an SVG string (same as Export → SVG). */
+  mapSVG(): string {
+    return exportSVG(this);
+  }
+
   private async exportAs(kind: "md" | "md-list" | "opml" | "svg" | "png" | "pdf" | "html" | "json" | "txt") {
     await this.flush();
     const top = this.top;
@@ -983,7 +1029,21 @@ export class App {
       { id: "shape", group: "Topics", title: "Topic shape…", keys: ["Mod+Shift+S"], navOnly: false, run: () => this.openShapePicker() },
       { id: "icon", group: "Topics", title: "Topic icon…", keys: ["Mod+I"], navOnly: false, run: () => this.openIconPicker() },
       { id: "link", group: "Topics", title: "Link to another topic…", keys: ["Mod+Shift+L"], navOnly: false, run: () => this.linkTo() },
-      { id: "goto-link", group: "Topics", title: "Go to linked topic", keys: ["Mod+G"], navOnly: false, run: () => this.goToLink() },
+      { id: "goto-link", group: "Topics", title: "Go to linked topic", keys: ["Mod+G"], navOnly: false, run: () => (this.selNode?.xref && !this.selNode.links?.length ? this.tasks.openXref() : this.goToLink()) },
+      { id: "link-label", group: "Topics", title: "Text on link…", run: () => this.tasks.labelLinks() },
+      { id: "xref", group: "Topics", title: "Link to a topic in another map…", run: () => this.tasks.linkOtherMap() },
+      { id: "xref-open", group: "Topics", title: "Open linked map", run: () => this.tasks.openXref() },
+      { id: "xref-remove", group: "Topics", title: "Remove link to other map", run: () => this.mutate(() => void delete this.selNode?.xref) },
+      { id: "plan", group: "Tasks", title: "Task details (dates, progress, priority)", keys: ["Mod+Shift+K"], navOnly: false, run: () => this.tasks.addPlan() },
+      { id: "plan-after", group: "Tasks", title: "Starts after… (predecessor)", run: () => this.tasks.pickPredecessor() },
+      { id: "plan-chain", group: "Tasks", title: "Chain selected tasks (Shift-click to pick)", run: () => this.tasks.chain([this.sel!, ...this.extra].filter(Boolean)) },
+      { id: "plan-remove", group: "Tasks", title: "Remove task details", run: () => this.tasks.update(() => undefined, true) },
+      ...[1, 2, 3, 4, 5].map((p) => ({ id: "pri-" + p, group: "Tasks", title: `Priority P${p}`, noHelp: true, run: () => this.tasks.update((x) => ({ ...x, priority: p })) })),
+      ...[0, 25, 50, 75, 100].map((p) => ({ id: "prog-" + p, group: "Tasks", title: `Progress ${p}%`, noHelp: true, run: () => this.tasks.update((x) => ({ ...x, progress: p })) })),
+      { id: "labels", group: "Topics", title: "Labels…", keys: ["Mod+Shift+;"], navOnly: false, run: () => this.tasks.editLabels() },
+      { id: "boundary", group: "Topics", title: "Boundary around branch", keys: ["Mod+Shift+B"], navOnly: false, run: () => this.tasks.toggleBoundary() },
+      { id: "boundary-label", group: "Topics", title: "Boundary label…", run: () => this.tasks.editBoundary() },
+      { id: "summary", group: "Topics", title: "Summary of selected topics (Shift-click to pick)", keys: ["Mod+Shift+]"], navOnly: false, run: () => this.tasks.addSummary([this.sel!, ...this.extra].filter(Boolean)) },
       { id: "unlink", group: "Topics", title: "Remove links from topic…", run: () => this.removeLinks() },
       { id: "attach", group: "Topics", title: "Attach files (images, PDFs…)", keys: ["Mod+Shift+A"], navOnly: false, run: () => this.attach() },
       { id: "open-attachment", group: "Topics", title: "Open attachment…", keys: ["Mod+Shift+V"], navOnly: false, run: () => this.openAttachmentPicker() },
@@ -1007,6 +1067,8 @@ export class App {
       { id: "palette", group: "View", title: "Command palette", keys: ["Mod+K", "Mod+Shift+P"], navOnly: false, run: () => this.openCommands() },
       { id: "view-map", group: "View", title: "Map view", keys: ["Mod+1"], navOnly: false, run: () => this.setView("map") },
       { id: "view-outline", group: "View", title: "Outline view", keys: ["Mod+2"], navOnly: false, run: () => this.setView("outline") },
+      { id: "view-gantt", group: "View", title: "Gantt chart", keys: ["Mod+3"], navOnly: false, run: () => this.setView("gantt") },
+      ...LINE_STYLES.map((l) => ({ id: "lines-" + l.id, group: "View", title: `Lines: ${l.name.toLowerCase()}`, run: () => this.setLines(l.id) })),
       { id: "layout", group: "View", title: "Layout…", keys: ["Mod+L"], navOnly: false, run: () => this.openLayoutPicker() },
       ...LAYOUTS.map((l) => ({ id: "layout-" + l.id, group: "View", title: `Layout: ${l.name}`, noHelp: true, run: () => this.setLayout(l.id) })),
       { id: "style-filled", group: "View", title: "Map style: filled topics", noHelp: true, run: () => this.setMapStyle("filled") },
@@ -1220,7 +1282,7 @@ export class App {
     const cur = this.layout;
     const items: PaletteItem[] = LAYOUTS.map((l) => ({
       label: l.name + (l.id === cur ? "  ✓" : ""),
-      hint: l.id === "mindmap" ? "branches on both sides" : l.id === "down" ? "top to bottom" : "one side",
+      hint: l.id === "mindmap" ? "branches on both sides" : l.id === "down" ? "top to bottom" : l.id === "timeline" ? "main topics down a line" : l.id === "brace" ? "brackets instead of lines" : "one side",
       keys: "",
       run: () => this.setLayout(l.id),
     }));
@@ -1724,16 +1786,21 @@ export class App {
     $("in-icon").onclick = () => this.openIconPicker();
     $("in-theme").onclick = () => this.openThemePicker();
     const lay = $("in-layouts");
-    const li: Record<string, string> = { mindmap: "layoutMind", right: "layoutRight", left: "layoutLeft", down: "layoutDown" };
+    const li: Record<string, string> = { mindmap: "layoutMind", right: "layoutRight", left: "layoutLeft", down: "layoutDown", timeline: "layoutTimeline", brace: "layoutBrace" };
     lay.innerHTML = LAYOUTS.map((l) => `<button data-layout="${l.id}" title="${l.name}">${icon(li[l.id], 20)}</button>`).join("");
     lay.addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-layout]");
       if (b) this.setLayout(b.dataset.layout as LayoutKind);
     });
+    $("in-lines").addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-lines]");
+      if (b) this.setLines(b.dataset.lines as LineStyle);
+    });
     $("in-mapstyle").addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-style]");
       if (b) this.setMapStyle(b.dataset.style as "filled" | "outline");
     });
+    this.tasks.wire();
     $("in-actions").addEventListener("click", (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-act]");
       if (!b) return;
@@ -1754,6 +1821,11 @@ export class App {
       if (act === "web") void this.addWebLink();
       if (act === "callout") void this.editCallout();
       if (act === "ai") this.runAI("expand");
+      if (act === "labels") void this.tasks.editLabels();
+      if (act === "boundary") this.tasks.toggleBoundary();
+      if (act === "summary") this.tasks.addSummary([n.id, ...this.extra]);
+      if (act === "xref") void (n.xref ? this.tasks.openXref() : this.tasks.linkOtherMap());
+      if (act === "link-label") void this.tasks.labelLinks();
     });
   }
 
@@ -1763,6 +1835,7 @@ export class App {
     $("in-layout-name").textContent = LAYOUTS.find((x) => x.id === this.layout)?.name ?? "";
     $("in-layouts").querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.layout === this.layout));
     $("in-mapstyle").querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.style === this.mapStyle));
+    $("in-lines").querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.lines === this.lines));
     const th = THEMES.find((t) => t.id === this.theme);
     $("in-theme").innerHTML = `<span class="sw-mini" style="background:${th ? th.rootBg : "linear-gradient(135deg,#fff 50%,#1f2937 50%)"}"></span><span>${th ? th.name : "System (light/dark)"}</span><kbd>${prettyChord("Mod+Shift+T")}</kbd>`;
     const n = this.selNode;
@@ -1796,7 +1869,13 @@ export class App {
       act("link", "link", "Link to topic…", "Mod+Shift+L") +
       act("web", "globe", "Add web link…") +
       act("callout", "callout", n.callout ? "Edit callout" : "Add callout") +
+      act("labels", "tag", n.labels?.length ? "Edit labels" : "Add labels", "Mod+Shift+;") +
+      (n === this.root ? "" : act("boundary", "boundary", n.boundary !== undefined ? "Remove boundary" : "Add boundary", "Mod+Shift+B")) +
+      (n === this.root || n.summary ? "" : act("summary", "summary", this.extra.size ? `Summary of ${this.extra.size + 1} topics` : "Add summary", "Mod+Shift+]")) +
+      (n.links?.length ? act("link-label", "link", "Text on link…") : "") +
+      act("xref", "mapLink", n.xref ? "Open linked map" : "Link to other map…") +
       act("ai", "sparkles", "AI: expand topic", "Mod+Shift+I");
+    this.tasks.render(n);
   }
 
   private async addWebLink() {
@@ -1863,6 +1942,7 @@ export class App {
     };
     $("map-title").onclick = () => this.openSwitcher();
     $("tb-outline").onclick = () => this.setView(this.view === "outline" ? "map" : "outline");
+    $("tb-gantt").onclick = () => this.setView(this.view === "gantt" ? "map" : "gantt");
     $("tb-search").onclick = () => this.openSearch();
     $("tb-present").onclick = () => void this.presenter.start();
     $("tb-panel").onclick = () => this.togglePanel();
@@ -1925,6 +2005,7 @@ export class App {
       this.setNote(id, ta.value);
       this.mapView.updateNode(id);
     });
+    attachListEditing(ta);
     // Click on empty stage returns keyboard focus to the map.
     $("stage").addEventListener("mousedown", (e) => {
       if (e.target === $("stage")) this.focusSink();

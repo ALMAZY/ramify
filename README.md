@@ -37,14 +37,18 @@ brew install --cask ramify
 | **Keyboard-first** | Build and navigate whole maps without the mouse. `?` shows every shortcut. |
 | **Command palette** | Every action on `⌘K`, with fuzzy search. |
 | **Rich notes** | Markdown notes on any topic (`⌘E`): bold, links, tables, code, rendered in place. |
-| **Task lists** | Checkbox topics (`⌘↩`) and `- [ ]` checklists inside notes, with a progress chip on the topic. |
+| **Task lists** | Checkbox topics (`⌘↩`) and `- [ ]` checklists inside notes, with a progress chip on the topic. In notes, Enter continues a list (tasks, bullets, numbers). |
+| **Task details** | Progress, priority (P1–P5), start and due dates, duration, assignee and "starts after" for any topic (`⌘⇧K`). Shown on the topic as a progress bar and dates. |
+| **Gantt chart** | `⌘3`: every dated topic on a timeline. Drag bars to move or resize, drag the knob to set progress; tasks that come after move along. Shift-click tasks and press *Dependencies* to chain them. Export PNG, JPEG, PDF, Excel (CSV) or Calendar (.ics), or print. |
+| **Summary & boundary** | A brace that sums up several topics (`⌘⇧]`, Shift-click to pick them) and a dashed box with a label around a branch (`⌘⇧B`). |
+| **Labels** | Small tags under a topic, e.g. roles or owners (`⌘⇧;`). |
 | **Attachments** | Drop images, PDFs or any file on a topic, or press `⌘⇧A`. Images show on the map. |
-| **Cross-links** | Connect any two topics with a dashed arrow (`⌘⇧L`). Jump along with `⌘G`. |
+| **Cross-links** | Connect any two topics with a dashed arrow (`⌘⇧L`), with optional text on it. Jump along with `⌘G`. Link to a topic in another map too. |
 | **Daily notes** | `⌘⇧D` opens today's map in `Daily/YYYY-MM-DD.md`, the same naming as Obsidian. |
 | **Search** | `⌘F` finds in the current map, `⌘⇧F` searches every map (text and notes). |
 | **Node styles** | 9 colours plus any custom colour, 4 shapes, and 60+ icons. |
 | **16 themes** | Light, dark and in between, with a live preview (`⌘⇧T`). |
-| **4 layouts** | Mind map, tree right, tree left, org chart (`⌘L`). Saved per map. |
+| **6 layouts** | Mind map, tree right, tree left, org chart, timeline, brace map (`⌘L`), with curved, elbow or straight lines. Saved per map. |
 | **Outline view** | Edit the same map as a list (`⌘2`), the fastest way to type in a lecture. |
 | **Folders** | Organise maps in sub-folders. Move a map with `⌘⇧M`. |
 | **Present mode** | Full screen, one slide per branch, with notes as captions (`⌘⇧↩`). |
@@ -79,6 +83,9 @@ brew install --cask ramify
 | `⌘]` / `⌘[` | Focus in / out |
 | `⌘C` `⌘X` `⌘V` `⌘D` | Copy, cut, paste, duplicate branch |
 | `⌘⇧I` | AI: expand topic |
+| `⌘⇧K` | Task details (dates, progress, priority) |
+| `⌘⇧B` / `⌘⇧]` / `⌘⇧;` | Boundary / summary / labels |
+| Shift-click | Pick more topics (for a summary or for chaining tasks) |
 
 | Typing in a topic | |
 |---|---|
@@ -93,7 +100,7 @@ brew install --cask ramify
 | `⌘K` | Command palette |
 | `⌘F` / `⌘⇧F` | Find in map / search all maps |
 | `⌘N` / `⌘P` / `⌘⇧D` | New map / open map / daily note |
-| `⌘1` / `⌘2` | Map / outline view |
+| `⌘1` / `⌘2` / `⌘3` | Map / outline / Gantt view |
 | `⌘L` / `⌘⇧T` | Layout / theme |
 | `⌘⇧↩` or `F5` | Present |
 | `⌘0` `⌘=` `⌘-` | Fit, zoom in, zoom out |
@@ -132,6 +139,9 @@ ramify-layout: down
   - [x] average O(n log n)
 - 🔥 Merge sort <!--collapsed--> ^ms1
   - stable
+- Revise for exam <!--plan:progress=40;priority=2;start=2026-12-01;due=2026-12-05;who=Ann;after=ms1--> <!--labels:Exam-->
+  - Practice set <!--boundary:Week 1-->
+  - Both done <!--summary:2-->
 ```
 
 - `# heading` is the central topic. The file name follows it.
@@ -141,7 +151,9 @@ ramify-layout: down
 - `<!--color:…-->`, `<!--shape:…-->`, `<!--collapsed-->` and `<!--link:id-->` are hidden in Obsidian's reading view.
 - `^id` at the end of an item is an Obsidian block id. Cross-links point to it.
 - Attachments are copied into an `attachments/` folder inside your maps folder.
-- `ramify-layout` in the front matter stores the map's layout. Other front matter is kept as it is.
+- `<!--plan:…-->` holds task details: `progress`, `priority` (1–5), `start` and `due` (YYYY-MM-DD), `who`, and `after` (ids of the topics it waits for).
+- `<!--labels:a|b-->`, `<!--boundary:label-->` (or `<!--boundary-->`), `<!--summary:N-->` (sums up the N topics before it), `<!--link:id: text-->` and `<!--xref:other-map.md#id-->` (a topic in another map).
+- `ramify-layout` and `ramify-lines` in the front matter store the map's layout and line style. Other front matter is kept as it is.
 
 Import is more lenient. It also accepts `##` headings, `*`/`+`/`1.` bullets, tabs and plain paragraphs.
 

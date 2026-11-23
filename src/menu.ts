@@ -29,8 +29,13 @@ export function showMenu(anchor: HTMLElement, items: MenuItem[], onClose?: () =>
     .join("");
   document.body.append(el);
   const r = anchor.getBoundingClientRect();
-  el.style.top = r.bottom + 6 + "px";
-  if (align === "left") el.style.left = Math.max(8, r.left) + "px";
+  // Open below the anchor; if it doesn't fit (e.g. the Settings button at the
+  // bottom of the sidebar), open above it; keep it inside the window either way.
+  const h = el.offsetHeight;
+  const below = r.bottom + 6;
+  const top = below + h <= window.innerHeight - 8 ? below : r.top - 6 - h;
+  el.style.top = Math.max(8, Math.min(top, window.innerHeight - 8 - h)) + "px";
+  if (align === "left") el.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 8 - el.offsetWidth)) + "px";
   else el.style.right = Math.max(8, window.innerWidth - r.right) + "px";
   open = el;
   const buttons = Array.from(el.querySelectorAll<HTMLButtonElement>("button.menu-item"));

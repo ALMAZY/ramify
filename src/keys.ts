@@ -20,6 +20,7 @@ export function chord(e: KeyboardEvent): string {
     else if (e.code === "Minus") k = "-";
     else if (e.code === "Slash") k = "/";
     else if (e.code === "Backslash") k = "\\";
+    else if (e.code === "Semicolon") k = ";";
   }
   if (k === " ") k = "Space";
   if (k.length === 1) k = k.toUpperCase();

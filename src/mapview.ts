@@ -1,8 +1,10 @@
 import type { App } from "./app";
+import { PRIORITY_COLORS, progressOf, shortDate, span } from "./plan";
+import { daysLabel, overdue } from "./tasks-ui";
 import { MapNode, find, moveTo, visibleOrder, cycleTask, addChild, findByAnchor, walk, Shape } from "./model";
 import { taskStats, noteLinks, attachmentURL } from "./notes";
 import { resolveLink } from "./storage";
-import { layout, edgePath, bounds, Box, Size } from "./layout";
+import { layout, edgePath, bounds, boundaryBoxes, setLineStyle, Box, Size } from "./layout";
 import { routeLinks, LinkReq } from "./router";
 import { resolveColors, cssColor, hexColor, contrastText } from "./colors";
 import { shapePath, STROKE_ONLY, ShapeId } from "./shapes";
@@ -72,8 +74,12 @@ export class MapView {
     const el = document.createElement("div");
     el.className = "node";
     el.dataset.id = id;
-    el.innerHTML = `<svg class="bg" aria-hidden="true"><path class="ring"/><path class="shape"/></svg><span class="box"></span><span class="txt"></span><span class="chip"></span><span class="ndot" title="Has notes"></span><span class="badge"></span><span class="fold-dot" title="Fold / unfold (⌘.)"></span><span class="callout" hidden></span>`;
+    el.innerHTML = `<svg class="bg" aria-hidden="true"><path class="ring"/><path class="shape"/></svg><span class="box"></span><span class="pri" hidden></span><span class="txt"></span><span class="chip"></span><span class="xref" hidden title="Open the linked topic in the other map">↗</span><span class="ndot" title="Has notes"></span><span class="badge"></span><span class="fold-dot" title="Fold / unfold (⌘.)"></span><span class="callout" hidden></span><div class="pmeta" hidden></div><div class="labels" hidden></div>`;
     return el;
+  }
+
+  edgesSvg(): SVGSVGElement {
+    return this.edgesEl as unknown as SVGSVGElement;
   }
 
   elementFor(id: string) {
@@ -158,9 +164,42 @@ export class MapView {
     el.classList.toggle("folded", !!n.collapsed && n.children.length > 0);
     const badge = el.querySelector<HTMLElement>(".badge")!;
     badge.textContent = n.collapsed && n.children.length ? String(countDesc(n)) : "";
+    this.paintPlan(el, n);
     const txt = el.querySelector<HTMLElement>(".txt")!;
     if (this.app.editing !== n.id && txt.textContent !== n.text) txt.textContent = n.text;
     el.classList.toggle("empty", !n.text);
+  }
+
+  /** Priority badge, progress bar, dates, assignee and labels. */
+  private paintPlan(el: HTMLElement, n: MapNode) {
+    const p = n.plan;
+    const pri = el.querySelector<HTMLElement>(".pri")!;
+    pri.hidden = !p?.priority;
+    if (p?.priority) {
+      pri.textContent = "P" + p.priority;
+      pri.style.background = PRIORITY_COLORS[p.priority];
+    }
+    const meta = el.querySelector<HTMLElement>(".pmeta")!;
+    let html = "";
+    if (p) {
+      const prog = progressOf(n);
+      if (prog !== undefined) html += `<div class="prow"><span class="pbar"><i style="width:${prog}%"></i></span><span class="ppct">${prog}%</span></div>`;
+      const s = span(p);
+      if (s.start && s.due)
+        html += `<div class="prow"><span class="pdates">${s.start === s.due ? shortDate(s.start) : `${shortDate(s.start)} – ${shortDate(s.due)}`}</span><span class="pdays">${daysLabel(s.start, s.due)}</span></div>`;
+      if (p.who) html += `<div class="prow"><span class="pwho"><b>${escHtml(p.who.trim()[0]?.toUpperCase() ?? "?")}</b>${escHtml(p.who)}</span></div>`;
+    }
+    meta.hidden = !html;
+    if (meta.innerHTML !== html) meta.innerHTML = html;
+    el.classList.toggle("overdue", overdue(n));
+    el.classList.toggle("has-plan", !!html);
+    const labels = el.querySelector<HTMLElement>(".labels")!;
+    const lh = (n.labels ?? []).map((l) => `<span>${escHtml(l)}</span>`).join("");
+    labels.hidden = !lh;
+    if (labels.innerHTML !== lh) labels.innerHTML = lh;
+    const x = el.querySelector<HTMLElement>(".xref")!;
+    x.hidden = !n.xref;
+    if (n.xref) x.title = "Open " + n.xref.split("#")[0].replace(/\.md$/, "");
   }
 
   updateNode(id: string) {
@@ -177,6 +216,7 @@ export class MapView {
     if (this.app.view !== "map") return;
     const sizes = new Map<string, Size>();
     for (const [id, el] of this.els) sizes.set(id, { w: el.offsetWidth, h: el.offsetHeight });
+    setLineStyle(this.app.lines);
     this.boxes = layout(this.app.top, sizes, this.app.layout);
     for (const [id, el] of this.els) {
       const b = this.boxes.get(id);
@@ -213,7 +253,7 @@ export class MapView {
         this.edgeEls.set(id, path);
       }
       path.setAttribute("d", edgePath(p, b));
-      path.setAttribute("class", "edge" + (b.depth === 1 ? " e1" : ""));
+      path.setAttribute("class", "edge" + (b.depth === 1 ? " e1" : "") + (b.brace ? " brace" : ""));
       path.style.stroke = this.app.mapStyle === "filled" ? "var(--edge)" : cssColor(this.colors.get(id) ?? "gray");
     }
     for (const [id, path] of this.edgeEls) {
@@ -222,8 +262,29 @@ export class MapView {
         this.edgeEls.delete(id);
       }
     }
+    this.drawBoundaries();
     this.drawLinks();
     if (!this.camSet && this.boxes.size) this.fit(true);
+  }
+
+  /** Dashed boxes around branches that have a boundary, with their label tab. */
+  private drawBoundaries() {
+    let g = this.edgesEl.querySelector<SVGGElement>("g.bounds");
+    if (!g) {
+      g = document.createElementNS(SVGNS, "g") as SVGGElement;
+      g.setAttribute("class", "bounds");
+      this.edgesEl.prepend(g);
+    }
+    let html = "";
+    for (const b of boundaryBoxes(this.app.top, this.boxes)) {
+      const col = cssColor(this.colors.get(b.id) ?? "gray");
+      html += `<rect class="bnd" x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="10" style="--c:${col}"/>`;
+      if (b.label) {
+        const tw = Math.min(b.w - 8, textWidth(b.label, "600 12px " + FONT) + 18);
+        html += `<g class="bnd-tab" style="--c:${col}"><rect x="${b.x + 10}" y="${b.y - 9}" width="${tw}" height="22" rx="6"/><text x="${b.x + 19}" y="${b.y + 6}">${escHtml(clipText(b.label, tw - 18, "600 12px " + FONT))}</text></g>`;
+      }
+    }
+    if (g.innerHTML !== html) g.innerHTML = html;
   }
 
   /** Dashed arrows for cross-links between visible topics. */
@@ -256,6 +317,7 @@ export class MapView {
       this.linkSig = sig;
       const paths = routeLinks(this.boxes, reqs, this.foldDots());
       g.innerHTML = "";
+      const labels: SVGElement[] = [];
       reqs.forEach((r, k) => {
         if (!paths[k]) return;
         const p = document.createElementNS(SVGNS, "path");
@@ -265,7 +327,33 @@ export class MapView {
         p.dataset.to = r.to;
         p.setAttribute("marker-end", "url(#lm-arrow)");
         g!.append(p);
+        if (r.label) {
+          // Text halfway along the link.
+          // Text near the middle of the link, at a spot where no topic covers it.
+          const len = p.getTotalLength();
+          const tw = textWidth(r.label, "500 12px " + FONT) / 2 + 4;
+          const free = (x: number, y: number) =>
+            ![...this.boxes.values()].some((b) => x + tw > b.x - 2 && x - tw < b.x + b.w + 2 && y + 9 > b.y - 2 && y - 9 < b.y + b.h + 2);
+          let pt = p.getPointAtLength(len / 2);
+          for (const f of [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82]) {
+            const q = p.getPointAtLength(len * f);
+            if (free(q.x, q.y)) {
+              pt = q;
+              break;
+            }
+          }
+          const t = document.createElementNS(SVGNS, "text");
+          t.setAttribute("class", "xlabel");
+          t.setAttribute("x", String(pt.x));
+          t.setAttribute("y", String(pt.y + 4));
+          t.setAttribute("text-anchor", "middle");
+          t.dataset.from = r.from;
+          t.dataset.to = r.to;
+          t.textContent = r.label;
+          labels.push(t);
+        }
       });
+      labels.forEach((t) => g!.append(t)); // above every link
     }
     this.markHotLinks();
   }
@@ -288,7 +376,7 @@ export class MapView {
     walk(this.app.top, (n) => {
       for (const a of n.links ?? []) {
         const t = findByAnchor(this.app.root, a);
-        if (t && t.id !== n.id && this.boxes.has(n.id) && this.boxes.has(t.id)) out.push({ from: n.id, to: t.id });
+        if (t && t.id !== n.id && this.boxes.has(n.id) && this.boxes.has(t.id)) out.push({ from: n.id, to: t.id, label: n.linkLabels?.[a] });
       }
     });
     return out;
@@ -303,12 +391,17 @@ export class MapView {
       // Draw the selected topic's links on top.
       if (hot) p.parentNode?.appendChild(p);
     });
+    this.edgesEl.querySelectorAll<SVGTextElement>("text.xlabel").forEach((t) => {
+      t.classList.toggle("hot", t.dataset.from === sel || t.dataset.to === sel);
+      t.parentNode?.appendChild(t); // labels stay above the lines
+    });
   }
 
 
   renderSelection() {
     for (const [id, el] of this.els) {
       el.classList.toggle("sel", id === this.app.sel);
+      el.classList.toggle("msel", this.app.extra.has(id));
       el.classList.toggle("editing", id === this.app.editing);
     }
     this.markHotLinks();
@@ -665,7 +758,8 @@ export class MapView {
         if (n && t.classList.contains("box")) this.app.mutate(() => void cycleTaskDone(n));
         else if (n && t.classList.contains("badge")) this.app.mutate(() => void (n.collapsed = false));
         else if (n && t.classList.contains("fold-dot")) this.app.mutate(() => void (n.collapsed = true));
-        else this.app.select(dragId, { scroll: false });
+        else if (n && t.closest(".xref")) void this.app.tasks.openXref(n);
+        else this.app.select(dragId, { scroll: false, add: e.shiftKey });
         this.app.focusSink();
       } else if (mode === "drag" && dragId) {
         ghost?.remove();
@@ -752,4 +846,23 @@ export function caretEdges(el: HTMLElement): { atStart: boolean; atEnd: boolean 
   post.selectNodeContents(el);
   post.setStart(r.endContainer, r.endOffset);
   return { atStart: pre.toString().length === 0 && r.collapsed, atEnd: post.toString().length === 0 && r.collapsed };
+}
+
+function escHtml(s: string) {
+  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+}
+
+const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif';
+let measureCtx: CanvasRenderingContext2D | null = null;
+export function textWidth(s: string, font: string): number {
+  measureCtx ??= document.createElement("canvas").getContext("2d");
+  if (!measureCtx) return s.length * 7;
+  measureCtx.font = font;
+  return measureCtx.measureText(s).width;
+}
+function clipText(s: string, w: number, font: string): string {
+  if (textWidth(s, font) <= w) return s;
+  let t = s;
+  while (t.length > 1 && textWidth(t + "…", font) > w) t = t.slice(0, -1);
+  return t + "…";
 }

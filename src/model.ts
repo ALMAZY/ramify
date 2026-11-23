@@ -21,7 +21,33 @@ export interface MapNode {
   anchor?: string;
   /** Anchors of topics this topic links to. */
   links?: string[];
+  /** Text shown on a cross-link, by target anchor. */
+  linkLabels?: Record<string, string>;
+  /** Task details: progress, priority, dates, who, predecessors. */
+  plan?: Plan;
+  /** Small tags shown under the topic (roles, owners, categories). */
+  labels?: string[];
+  /** Dashed box around this topic's branch; the string is its label ("" = no label). */
+  boundary?: string;
+  /** This topic is a summary of the `summary` siblings just before it (drawn with a brace). */
+  summary?: number;
+  /** Link to a topic in another map: "folder/map.md#anchor". */
+  xref?: string;
   children: MapNode[];
+}
+
+export interface Plan {
+  /** 0–100. Undefined = worked out from sub-tasks. */
+  progress?: number;
+  /** 1 (highest) – 5. */
+  priority?: number;
+  /** ISO dates, YYYY-MM-DD. */
+  start?: string;
+  due?: string;
+  /** Assignee (free text). */
+  who?: string;
+  /** Anchors of predecessor topics (this task starts after them). */
+  after?: string[];
 }
 
 let counter = 0;

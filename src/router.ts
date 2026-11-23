@@ -12,6 +12,8 @@ import { Box, edgeSamples, linkPath } from "./layout";
 export interface LinkReq {
   from: string;
   to: string;
+  /** Text shown on the link. */
+  label?: string;
 }
 
 type Pt = [number, number];
