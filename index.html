@@ -10,26 +10,41 @@
   <body>
     <div id="app">
       <aside id="sidebar">
-        <div class="sb-head">
-          <button id="sb-folder" class="sb-folder" title="Choose folder"></button>
-          <button id="sb-new" class="icon-btn" title="New map (⌘N)">＋</button>
+        <div class="sb-top">
+          <div class="brand"><span class="logo"></span>Ramify</div>
+          <button id="sb-collapse" class="icon-btn" data-icon="panelLeft" title="Hide sidebar (⌘B)"></button>
         </div>
-        <input id="sb-filter" class="sb-filter" placeholder="Filter maps…" spellcheck="false" />
+        <button id="sb-search" class="sb-search"><span data-icon="search"></span><span>Search</span><kbd>⌘⇧F</kbd></button>
+        <div class="sb-new">
+          <button id="sb-new" class="sb-new-main"><span data-icon="plus"></span>New map</button>
+          <button id="sb-new-menu" class="sb-new-caret" data-icon="chevron" title="More"></button>
+        </div>
+        <div class="sb-section">
+          <span>Maps</span>
+          <button id="sb-folder" class="sb-folder" title="Choose the folder for your maps"></button>
+        </div>
+        <input id="sb-filter" class="sb-filter" placeholder="Filter maps…" spellcheck="false" hidden />
         <ul id="sb-list"></ul>
         <div class="sb-foot">
-          <button id="sb-help" class="link-btn">Shortcuts <kbd>?</kbd></button>
+          <button id="sb-settings" class="sb-foot-btn"><span data-icon="settings"></span>Settings</button>
+          <button id="sb-help" class="icon-btn" data-icon="help" title="Keyboard shortcuts (?)"></button>
         </div>
       </aside>
       <main id="main">
         <header id="topbar">
+          <button id="map-title" class="title-btn" title="Open map (⌘P)"><span id="map-title-text"></span><span data-icon="chevron"></span></button>
           <nav id="crumbs"></nav>
-          <div class="top-right">
-            <span id="save-state"></span>
-            <div class="seg" id="view-seg">
-              <button data-view="map" title="Map (⌘1)">Map</button>
-              <button data-view="outline" title="Outline (⌘2)">Outline</button>
-            </div>
-            <button id="palette-btn" class="icon-btn" title="Command palette (⌘K)">⌘K</button>
+          <span class="spacer"></span>
+          <span id="save-state"></span>
+          <div class="toolbar">
+            <button id="tb-outline" class="tb-btn" data-icon="list" title="Outline view (⌘2)"></button>
+            <button id="palette-btn" class="tb-btn" data-icon="command" title="Commands (⌘K)"></button>
+            <button id="tb-search" class="tb-btn" data-icon="search" title="Find in map (⌘F)"></button>
+            <span class="tb-sep"></span>
+            <button id="tb-export" class="tb-btn tb-text"><span data-icon="export"></span>Export</button>
+            <button id="tb-present" class="tb-btn tb-text"><span data-icon="play"></span>Present</button>
+            <span class="tb-sep"></span>
+            <button id="tb-panel" class="tb-btn" data-icon="panelRight" title="Style panel (⌘⇧\)"></button>
           </div>
         </header>
         <section id="stage">
@@ -41,15 +56,68 @@
             <div id="empty-hint" hidden></div>
           </div>
           <div id="outline-view" class="view" hidden></div>
+          <div id="zoombar">
+            <div class="zb-group">
+              <button id="zb-out" data-icon="minus" title="Zoom out (⌘−)"></button>
+              <button id="zb-pct" title="Reset to 100%">100%</button>
+              <button id="zb-in" data-icon="plus" title="Zoom in (⌘=)"></button>
+              <span class="zb-sep"></span>
+              <button id="zb-fit" data-icon="fit" title="Fit map (⌘0)"></button>
+              <button id="zb-center" data-icon="target" title="Center selected topic (⌘J)"></button>
+            </div>
+            <div class="zb-group">
+              <button id="zb-undo" data-icon="undo" title="Undo (⌘Z)"></button>
+              <button id="zb-redo" data-icon="redo" title="Redo (⌘⇧Z)"></button>
+            </div>
+          </div>
+          <button id="help-fab" class="help-fab" data-icon="help" title="Keyboard shortcuts (?)"></button>
         </section>
       </main>
-      <aside id="notes" hidden>
-        <div class="notes-head">
+      <aside id="notes">
+        <div class="in-head">
           <span id="notes-title"></span>
-          <button id="notes-close" class="icon-btn" title="Close (Esc)">✕</button>
+          <button id="notes-close" class="icon-btn" data-icon="x" title="Close panel"></button>
         </div>
-        <textarea id="notes-text" placeholder="Markdown notes for this topic…" spellcheck="true"></textarea>
-        <div class="notes-foot">Markdown · <kbd>Esc</kbd> back to map</div>
+        <div class="in-scroll">
+          <section class="in-sec">
+            <div class="in-row">
+              <h4>Style</h4>
+              <label class="switch" title="Apply colour and shape to the whole branch"><span>Children too</span><input type="checkbox" id="in-children" /><i></i></label>
+            </div>
+            <div class="in-label"><span>Color</span><span id="in-color-name"></span></div>
+            <div class="swatches" id="in-colors"></div>
+            <div class="in-label"><span>Shape</span><span id="in-shape-name"></span></div>
+            <div class="shapes" id="in-shapes"></div>
+            <div class="in-label"><span>Icon</span></div>
+            <button class="in-field" id="in-icon"></button>
+          </section>
+          <section class="in-sec">
+            <h4>Content</h4>
+            <div id="in-actions"></div>
+          </section>
+          <section class="in-sec in-notes">
+            <div class="in-row">
+              <h4>Notes</h4>
+              <span class="spacer"></span>
+              <button id="notes-attach" class="icon-btn" data-icon="paperclip" title="Attach files (⌘⇧A)"></button>
+              <button id="notes-mode" class="mini-btn">Edit</button>
+            </div>
+            <textarea id="notes-text" placeholder="Markdown notes for this topic…&#10;&#10;- [ ] checklist item&#10;**bold**, links, tables…&#10;Drop files on a topic to attach them." spellcheck="true"></textarea>
+            <div id="notes-preview" class="md" hidden></div>
+          </section>
+          <section class="in-sec">
+            <h4>Map</h4>
+            <div class="in-label"><span>Layout</span><span id="in-layout-name"></span></div>
+            <div class="seg-icons" id="in-layouts"></div>
+            <div class="in-label"><span>Topic style</span></div>
+            <div class="seg wide" id="in-mapstyle">
+              <button data-style="filled">Filled</button>
+              <button data-style="outline">Outline</button>
+            </div>
+            <div class="in-label"><span>Theme</span></div>
+            <button class="in-field" id="in-theme"></button>
+          </section>
+        </div>
       </aside>
     </div>
     <div id="palette" hidden>

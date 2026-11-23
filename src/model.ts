@@ -1,6 +1,9 @@
 // Tree model for a single map. Pure data + structural operations; no DOM.
 
 export type Task = "todo" | "done" | undefined;
+import { ShapeId, SHAPE_IDS } from "./shapes";
+export type Shape = ShapeId;
+export const SHAPES: Shape[] = SHAPE_IDS;
 
 export interface MapNode {
   id: string;
@@ -10,6 +13,14 @@ export interface MapNode {
   collapsed?: boolean;
   /** Colour name (see colors.ts) or #hex. Inherited by the branch. */
   color?: string;
+  /** Outline shape. Undefined = automatic by level. */
+  shape?: Shape;
+  /** Short text shown in a bubble next to the topic. */
+  callout?: string;
+  /** Stable id used as a cross-link target (Obsidian block id: ^anchor). */
+  anchor?: string;
+  /** Anchors of topics this topic links to. */
+  links?: string[];
   children: MapNode[];
 }
 
@@ -27,9 +38,28 @@ export function clone<T>(v: T): T {
   return structuredClone(v);
 }
 
-/** Fresh copy of a subtree with new ids (used for paste / duplicate). */
+/** Fresh copy of a subtree with new ids (used for paste / duplicate). Anchors are dropped so they stay unique. */
 export function reId(n: MapNode): MapNode {
-  return { ...n, id: newId(), children: n.children.map(reId) };
+  const c: MapNode = { ...n, id: newId(), children: n.children.map(reId) };
+  delete c.anchor;
+  return c;
+}
+
+export function newAnchor(root: MapNode): string {
+  const used = new Set<string>();
+  walk(root, (n) => n.anchor && used.add(n.anchor));
+  for (;;) {
+    const a = Math.random().toString(36).slice(2, 8);
+    if (!used.has(a) && /[a-z]/.test(a)) return a;
+  }
+}
+
+export function findByAnchor(root: MapNode, anchor: string): MapNode | null {
+  let hit: MapNode | null = null;
+  walk(root, (n) => {
+    if (n.anchor === anchor) hit = n;
+  });
+  return hit;
 }
 
 export interface Loc {
@@ -219,6 +249,21 @@ export class History {
     if (!s) return null;
     this.past.push({ root: JSON.stringify(cur), sel });
     return s;
+  }
+  /**
+   * After an empty topic is dropped: remove the undo steps that only created it,
+   * so undo does not bring the empty topic back.
+   */
+  forgetEmptyEdit(currentRoot: MapNode, id: string) {
+    const last = this.past[this.past.length - 1];
+    if (!last) return;
+    // Only when the topic was already empty when editing started (a new topic),
+    // never when the user erased the text of an existing one.
+    const before = find(JSON.parse(last.root), id)?.node;
+    if (!before || before.text.trim() || before.children.length || before.note) return;
+    const cur = JSON.stringify(currentRoot);
+    this.past.pop(); // snapshot taken when editing started (it holds the empty topic)
+    while (this.past.length && this.past[this.past.length - 1].root === cur) this.past.pop();
   }
   clear() {
     this.past = [];

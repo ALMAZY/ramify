@@ -1,7 +1,11 @@
 import type { App } from "./app";
-import { MapNode, find, moveTo, visibleOrder, cycleTask, addChild } from "./model";
+import { MapNode, find, moveTo, visibleOrder, cycleTask, addChild, findByAnchor, walk, Shape } from "./model";
+import { taskStats, noteLinks, attachmentURL } from "./notes";
+import { resolveLink } from "./storage";
 import { layout, edgePath, bounds, Box, Size } from "./layout";
-import { resolveColors, cssColor } from "./colors";
+import { routeLinks, LinkReq } from "./router";
+import { resolveColors, cssColor, hexColor, contrastText } from "./colors";
+import { shapePath, STROKE_ONLY, ShapeId } from "./shapes";
 
 const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -32,7 +36,7 @@ export class MapView {
     const top = this.app.top;
     const visible = visibleOrder(top);
     const keep = new Set(visible.map((n) => n.id));
-    this.colors = resolveColors(top);
+    this.colors = resolveColors(this.app.root);
     for (const [id, el] of this.els) {
       if (!keep.has(id)) {
         el.remove();
@@ -65,18 +69,86 @@ export class MapView {
     const el = document.createElement("div");
     el.className = "node";
     el.dataset.id = id;
-    el.innerHTML = `<span class="box"></span><span class="txt"></span><span class="ndot" title="Has notes"></span><span class="badge"></span>`;
+    el.innerHTML = `<svg class="bg" aria-hidden="true"><path/></svg><span class="box"></span><span class="txt"></span><span class="chip"></span><span class="ndot" title="Has notes"></span><span class="badge"></span><span class="fold-dot" title="Fold / unfold (⌘.)"></span><span class="callout" hidden></span>`;
     return el;
+  }
+
+  elementFor(id: string) {
+    return this.els.get(id) ?? null;
+  }
+
+  /** Effective shape: the topic's own, or the default for its level. */
+  shapeOf(n: MapNode, depth: number): Shape {
+    if (n.shape) return n.shape;
+    if (this.app.mapStyle === "filled") return "rounded";
+    return depth === 0 ? "pill" : depth === 1 ? "rounded" : "line";
   }
 
   private paint(el: HTMLElement, n: MapNode, depth: number) {
     const isTop = n === this.app.top;
-    el.className = "node " + (isTop ? "root" : depth === 1 ? "d1" : "dn");
+    const shape = this.shapeOf(n, depth);
+    const filled = this.app.mapStyle === "filled";
+    el.className = "node " + (isTop ? "root" : depth === 1 ? "d1" : "dn") + " shape-" + shape + (filled ? " filled" : " outlined");
+    el.dataset.shape = shape;
+    if (this.app.layout === "down" && depth <= 1) el.classList.add("vdown");
+    // Checklist progress and attachment count from the notes.
+    const chip = el.querySelector<HTMLElement>(".chip")!;
+    const ts = taskStats(n.note);
+    const links = noteLinks(n.note);
+    const files = links.filter((l) => !l.image).length;
+    const chipText = [ts.total ? `☑ ${ts.done}/${ts.total}` : "", files ? `📎 ${files}` : ""].filter(Boolean).join("  ");
+    if (chip.textContent !== chipText) chip.textContent = chipText;
+    el.classList.toggle("tasks-done", ts.total > 0 && ts.done === ts.total);
+    // First image in the notes is shown as a thumbnail on the topic.
+    const firstImg = links.find((l) => l.image);
+    let thumb = el.querySelector<HTMLImageElement>("img.thumb");
+    const rel = firstImg && this.app.fileName ? resolveLink(this.app.fileName, firstImg.href) : null;
+    if (rel) {
+      if (!thumb) {
+        thumb = document.createElement("img");
+        thumb.className = "thumb";
+        thumb.draggable = false;
+        thumb.addEventListener("load", () => this.relayout());
+        el.append(thumb);
+      }
+      if (thumb.dataset.rel !== rel) {
+        thumb.dataset.rel = rel;
+        attachmentURL(this.app.store, rel)
+          .then((u) => (thumb!.src = u))
+          .catch(() => thumb?.remove());
+      }
+    } else thumb?.remove();
+    // Colours: --c = branch colour, --fill / --stroke / --fg = how this topic is drawn.
     const c = this.colors.get(n.id);
-    if (c) el.style.setProperty("--c", cssColor(c));
-    else el.style.removeProperty("--c");
-    // A coloured central topic uses the colour as its fill.
-    el.classList.toggle("custom", isTop && !!n.color);
+    const col = c ? cssColor(c) : "var(--muted)";
+    el.style.setProperty("--c", col);
+    let fill = "none",
+      stroke = "none",
+      fg = "var(--text)";
+    if (shape === "line") stroke = isTop ? "var(--text)" : col;
+    else if (shape === "frame") stroke = col;
+    else if (shape === "plain") {
+      /* text only */
+    } else if (isTop) {
+      fill = n.color ? col : "var(--root-bg)";
+      fg = n.color ? contrastText(hexColor(n.color)) : "var(--root-fg)";
+    } else if (filled) {
+      if (depth === 1 || n.color) {
+        fill = col;
+        fg = contrastText(hexColor(c ?? "gray"));
+      } else fill = "var(--node-fill)";
+    } else {
+      fill = "var(--node-bg)";
+      stroke = col;
+    }
+    el.style.setProperty("--fill", fill);
+    el.style.setProperty("--stroke", stroke);
+    el.style.setProperty("--fg", fg);
+    el.classList.toggle("on-color", fg !== "var(--text)");
+    el.classList.toggle("has-kids", n.children.length > 0 && !n.collapsed && !isTop);
+    const callout = el.querySelector<HTMLElement>(".callout")!;
+    callout.hidden = !n.callout;
+    if ((n.callout ?? "") !== callout.textContent) callout.textContent = n.callout ?? "";
     el.classList.toggle("todo", n.task === "todo");
     el.classList.toggle("done", n.task === "done");
     el.classList.toggle("has-note", !!n.note.trim());
@@ -108,6 +180,11 @@ export class MapView {
       if (!b) continue;
       el.style.transform = `translate(${b.x}px, ${b.y}px)`;
       el.classList.toggle("left", b.side === -1);
+      el.classList.toggle("stack", !!b.stack);
+      const path = el.querySelector<SVGPathElement>("svg.bg path")!;
+      const d = shapePath(el.dataset.shape as ShapeId, b.w, b.h, !b.parent);
+      if (path.getAttribute("d") !== d) path.setAttribute("d", d);
+      path.classList.toggle("stroke-only", STROKE_ONLY.has(el.dataset.shape as ShapeId));
     }
     // Edges
     const seen = new Set<string>();
@@ -124,7 +201,7 @@ export class MapView {
       }
       path.setAttribute("d", edgePath(p, b));
       path.setAttribute("class", "edge" + (b.depth === 1 ? " e1" : ""));
-      path.style.stroke = cssColor(this.colors.get(id) ?? "gray");
+      path.style.stroke = this.app.mapStyle === "filled" ? "var(--edge)" : cssColor(this.colors.get(id) ?? "gray");
     }
     for (const [id, path] of this.edgeEls) {
       if (!seen.has(id)) {
@@ -132,14 +209,96 @@ export class MapView {
         this.edgeEls.delete(id);
       }
     }
+    this.drawLinks();
     if (!this.camSet && this.boxes.size) this.fit(true);
   }
+
+  /** Dashed arrows for cross-links between visible topics. */
+  private linkSig = "";
+  private linkTimer = 0;
+
+  /** Cross-links, path-found around topics (see router.ts). Debounced while typing. */
+  private drawLinks() {
+    if (this.app.editing) {
+      clearTimeout(this.linkTimer);
+      this.linkTimer = window.setTimeout(() => this.drawLinksNow(), 160);
+      return;
+    }
+    this.drawLinksNow();
+  }
+
+  private drawLinksNow() {
+    let g = this.edgesEl.querySelector<SVGGElement>("g.links");
+    if (!g) {
+      const defs = document.createElementNS(SVGNS, "defs");
+      defs.innerHTML = `<marker id="lm-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="link-head"/></marker><marker id="lm-arrow-hot" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="link-head hot"/></marker>`;
+      this.edgesEl.append(defs);
+      g = document.createElementNS(SVGNS, "g") as SVGGElement;
+      g.setAttribute("class", "links");
+      this.edgesEl.append(g);
+    }
+    const reqs = this.linkRequests();
+    const sig = JSON.stringify([reqs, [...this.boxes].map(([id, b]) => [id, Math.round(b.x), Math.round(b.y), Math.round(b.w), Math.round(b.h)])]);
+    if (sig !== this.linkSig) {
+      this.linkSig = sig;
+      const paths = routeLinks(this.boxes, reqs, this.foldDots());
+      g.innerHTML = "";
+      reqs.forEach((r, k) => {
+        if (!paths[k]) return;
+        const p = document.createElementNS(SVGNS, "path");
+        p.setAttribute("d", paths[k]);
+        p.setAttribute("class", "xlink");
+        p.dataset.from = r.from;
+        p.dataset.to = r.to;
+        p.setAttribute("marker-end", "url(#lm-arrow)");
+        g!.append(p);
+      });
+    }
+    this.markHotLinks();
+  }
+
+  /** Fold dots in map coordinates (links route around them). */
+  foldDots(): { x: number; y: number; w: number; h: number }[] {
+    const out: { x: number; y: number; w: number; h: number }[] = [];
+    for (const [id, el] of this.els) {
+      const dot = el.querySelector<HTMLElement>(".fold-dot");
+      const b = this.boxes.get(id);
+      if (!dot || !b || !dot.offsetParent) continue;
+      out.push({ x: b.x + dot.offsetLeft, y: b.y + dot.offsetTop, w: dot.offsetWidth, h: dot.offsetHeight });
+    }
+    return out;
+  }
+
+  /** All visible cross-links, in drawing order. */
+  linkRequests(): LinkReq[] {
+    const out: LinkReq[] = [];
+    walk(this.app.top, (n) => {
+      for (const a of n.links ?? []) {
+        const t = findByAnchor(this.app.root, a);
+        if (t && t.id !== n.id && this.boxes.has(n.id) && this.boxes.has(t.id)) out.push({ from: n.id, to: t.id });
+      }
+    });
+    return out;
+  }
+
+  private markHotLinks() {
+    const sel = this.app.sel;
+    this.edgesEl.querySelectorAll<SVGPathElement>("path.xlink").forEach((p) => {
+      const hot = p.dataset.from === sel || p.dataset.to === sel;
+      p.classList.toggle("hot", hot);
+      p.setAttribute("marker-end", hot ? "url(#lm-arrow-hot)" : "url(#lm-arrow)");
+      // Draw the selected topic's links on top.
+      if (hot) p.parentNode?.appendChild(p);
+    });
+  }
+
 
   renderSelection() {
     for (const [id, el] of this.els) {
       el.classList.toggle("sel", id === this.app.sel);
       el.classList.toggle("editing", id === this.app.editing);
     }
+    this.markHotLinks();
   }
 
   // ------------------------------------------------------------ editing
@@ -228,6 +387,8 @@ export class MapView {
     this.world.classList.toggle("anim", animate);
     this.world.style.transform = `translate(${this.cam.x}px, ${this.cam.y}px) scale(${this.cam.s})`;
     this.host.style.setProperty("--zoom", String(this.cam.s));
+    const pct = document.getElementById("zb-pct");
+    if (pct) pct.textContent = Math.round(this.cam.s * 100) + "%";
     if (animate) {
       clearTimeout((this as any)._animT);
       (this as any)._animT = setTimeout(() => this.world.classList.remove("anim"), 200);
@@ -241,10 +402,13 @@ export class MapView {
     const vw = this.host.clientWidth,
       vh = this.host.clientHeight;
     if (!vw || !vh) return;
-    const w = bb.maxX - bb.minX + 120,
-      h = bb.maxY - bb.minY + 120;
-    const s = Math.max(0.3, Math.min(1.1, vw / w, vh / h));
-    this.cam = { s, x: vw / 2 - ((bb.minX + bb.maxX) / 2) * s, y: vh / 2 - ((bb.minY + bb.maxY) / 2) * s };
+    // Leave room for the floating toolbar (top) and zoom bar (bottom).
+    const top = 64,
+      bottom = 64;
+    const w = bb.maxX - bb.minX + 80,
+      h = bb.maxY - bb.minY + 40;
+    const s = Math.max(0.3, Math.min(1.15, vw / w, (vh - top - bottom) / h));
+    this.cam = { s, x: vw / 2 - ((bb.minX + bb.maxX) / 2) * s, y: top + (vh - top - bottom) / 2 - ((bb.minY + bb.maxY) / 2) * s };
     this.camSet = true;
     this.applyCam(!instant);
   }
@@ -305,6 +469,7 @@ export class MapView {
   spatialNeighbor(id: string, dir: "left" | "right" | "up" | "down"): string | "expand" | null {
     const b = this.boxes.get(id);
     if (!b) return null;
+    if (b.down) return this.downNeighbor(id, b, dir);
     const n = this.app.node(id)!;
     const cx = b.x + b.w / 2,
       cy = b.y + b.h / 2;
@@ -354,6 +519,32 @@ export class MapView {
       }
     }
     return bestId;
+  }
+
+  /** Org-chart navigation: down = children, up = parent, left/right = same row. */
+  private downNeighbor(id: string, b: Box, dir: "left" | "right" | "up" | "down"): string | "expand" | null {
+    const n = this.app.node(id)!;
+    const cx = b.x + b.w / 2;
+    if (dir === "up") return b.parent;
+    if (dir === "down") {
+      if (n.collapsed && n.children.length) return "expand";
+      let best: string | null = null;
+      let bd = Infinity;
+      for (const c of n.children) {
+        const k = this.boxes.get(c.id);
+        if (k && Math.abs(k.x + k.w / 2 - cx) < bd) (bd = Math.abs(k.x + k.w / 2 - cx)), (best = c.id);
+      }
+      return best;
+    }
+    const sign = dir === "right" ? 1 : -1;
+    let best: string | null = null;
+    let bd = Infinity;
+    for (const [oid, o] of this.boxes) {
+      if (oid === id || o.depth !== b.depth) continue;
+      const d = (o.x + o.w / 2 - cx) * sign;
+      if (d > 2 && d < bd) (bd = d), (best = oid);
+    }
+    return best;
   }
 
   // ------------------------------------------------------------ mouse
@@ -432,6 +623,7 @@ export class MapView {
         const n = this.app.node(dragId);
         if (n && t.classList.contains("box")) this.app.mutate(() => void cycleTaskDone(n));
         else if (n && t.classList.contains("badge")) this.app.mutate(() => void (n.collapsed = false));
+        else if (n && t.classList.contains("fold-dot")) this.app.mutate(() => void (n.collapsed = true));
         else this.app.select(dragId, { scroll: false });
         this.app.focusSink();
       } else if (mode === "drag" && dragId) {

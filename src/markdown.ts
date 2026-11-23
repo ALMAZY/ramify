@@ -12,7 +12,8 @@
 // Import also accepts ## / ### headings, *, +, 1. bullets, tabs, and plain
 // continuation lines, so most Markdown notes open as a sensible map.
 
-import { MapNode, makeNode } from "./model";
+import { MapNode, makeNode, Shape, SHAPES } from "./model";
+import { SHAPE_ALIASES } from "./shapes";
 import { isValidColor } from "./colors";
 
 export interface ParsedDoc {
@@ -32,10 +33,53 @@ function indentWidth(ws: string): number {
 
 const COLOR_RE = /<!--\s*color:\s*([#\w]+)\s*-->/i;
 
-function cleanText(raw: string): { text: string; collapsed: boolean; color?: string } {
+const SHAPE_RE = /<!--\s*shape:\s*(\w+)\s*-->/i;
+const CALLOUT_RE = /<!--\s*callout:\s*([\s\S]*?)\s*-->/i;
+const LINK_RE = /<!--\s*link:\s*([\w-]+)\s*-->/gi;
+const ANCHOR_RE = /\s\^([A-Za-z0-9-]+)\s*$/;
+
+interface Meta {
+  collapsed?: boolean;
+  color?: string;
+  shape?: Shape;
+  anchor?: string;
+  links?: string[];
+  callout?: string;
+}
+
+function applyMeta(n: MapNode, m: Meta) {
+  if (m.collapsed) n.collapsed = true;
+  if (m.color) n.color = m.color;
+  if (m.shape) n.shape = m.shape;
+  if (m.anchor) n.anchor = m.anchor;
+  if (m.links?.length) n.links = m.links;
+  if (m.callout) n.callout = m.callout;
+}
+
+function cleanText(raw: string): { text: string; collapsed: boolean; color?: string; shape?: Shape; anchor?: string; links?: string[]; callout?: string } {
   let t = raw;
+  let callout: string | undefined;
+  const co = t.match(CALLOUT_RE);
+  if (co) {
+    callout = co[1].trim() || undefined;
+    t = t.replace(CALLOUT_RE, "");
+  }
   let collapsed = false;
   let color: string | undefined;
+  let shape: Shape | undefined;
+  let anchor: string | undefined;
+  const links: string[] = [];
+  t = t.replace(LINK_RE, (_m, a: string) => {
+    links.push(a);
+    return "";
+  });
+  const sm = t.match(SHAPE_RE);
+  if (sm) {
+    t = t.replace(SHAPE_RE, "");
+    const raw = sm[1].toLowerCase();
+    const s = (SHAPE_ALIASES[raw] ?? raw) as Shape;
+    if (SHAPES.includes(s)) shape = s;
+  }
   if (t.includes(COLLAPSED)) {
     collapsed = true;
     t = t.replace(COLLAPSED, "");
@@ -46,9 +90,14 @@ function cleanText(raw: string): { text: string; collapsed: boolean; color?: str
     const c = cm[1].toLowerCase();
     if (isValidColor(c)) color = c;
   }
+  const am = t.match(ANCHOR_RE);
+  if (am) {
+    anchor = am[1];
+    t = t.replace(ANCHOR_RE, "");
+  }
   t = t.replace(/<br\s*\/?>/gi, "\n").trim();
   if (/^\\\[[ xX]\]\s/.test(t)) t = t.slice(1);
-  return { text: t, collapsed, color };
+  return { text: t, collapsed, color, shape, anchor, links: links.length ? links : undefined, callout };
 }
 
 export function parseMarkdown(src: string, fallbackTitle = "Untitled"): ParsedDoc {
@@ -85,11 +134,19 @@ export function parseMarkdown(src: string, fallbackTitle = "Untitled"): ParsedDo
     const h = line.match(HEAD_RE);
     if (h && !line.startsWith(" ") && !line.startsWith("\t")) {
       const level = h[1].length;
-      const { text: t, collapsed, color } = cleanText(h[2]);
+      const cleaned = cleanText(h[2]);
+      let t = cleaned.text;
+      let task: "todo" | "done" | undefined;
+      const tb = t.match(/^\[([ xX])\]\s+/);
+      if (tb) {
+        task = tb[1] === " " ? "todo" : "done";
+        t = t.slice(tb[0].length);
+      }
       if (level === 1 && !rootTitled && root.children.length === 0) {
         root.text = t;
         root.collapsed = false;
-        if (color) root.color = color;
+        applyMeta(root, { ...cleaned, collapsed: false });
+        if (task) root.task = task;
         rootTitled = true;
         current = root;
         currentIndent = -1;
@@ -100,8 +157,8 @@ export function parseMarkdown(src: string, fallbackTitle = "Untitled"): ParsedDo
       while (headingStack.length > 1 && headingStack[headingStack.length - 1].level >= level) headingStack.pop();
       const parent = headingStack[headingStack.length - 1].node;
       const n = makeNode(t);
-      if (collapsed) n.collapsed = true;
-      if (color) n.color = color;
+      applyMeta(n, cleaned);
+      if (task) n.task = task;
       parent.children.push(n);
       headingStack.push({ level, node: n });
       listStack = [];
@@ -116,11 +173,10 @@ export function parseMarkdown(src: string, fallbackTitle = "Untitled"): ParsedDo
       // A list line indented deeper than the item content but inside a quote? Not possible: quotes start with '>'.
       while (listStack.length && listStack[listStack.length - 1].indent >= ind) listStack.pop();
       const parent = listStack.length ? listStack[listStack.length - 1].node : headingStack[headingStack.length - 1].node;
-      const { text: t, collapsed, color } = cleanText(m[3]);
-      const n = makeNode(t);
+      const cleaned = cleanText(m[3]);
+      const n = makeNode(cleaned.text);
       if (m[2] !== undefined) n.task = m[2] === " " ? "todo" : "done";
-      if (collapsed) n.collapsed = true;
-      if (color) n.color = color;
+      applyMeta(n, cleaned);
       parent.children.push(n);
       listStack.push({ indent: ind, node: n });
       current = n;
@@ -173,6 +229,18 @@ export function parseMarkdown(src: string, fallbackTitle = "Untitled"): ParsedDo
   return { root, frontmatter };
 }
 
+/** Hidden markers after a topic's text. The ^anchor (Obsidian block id) must come last. */
+function suffix(n: MapNode, withFold: boolean): string {
+  let s = "";
+  if (withFold && n.collapsed && n.children.length) s += " " + COLLAPSED;
+  if (n.color) s += ` <!--color:${n.color}-->`;
+  if (n.shape) s += ` <!--shape:${n.shape}-->`;
+  for (const l of n.links ?? []) s += ` <!--link:${l}-->`;
+  if (n.callout) s += ` <!--callout:${n.callout.replace(/\s+/g, " ").replace(/--+>?/g, "—")}-->`;
+  if (n.anchor) s += ` ^${n.anchor}`;
+  return s;
+}
+
 function escItem(t: string): string {
   let s = t.replace(/\n/g, "<br>");
   // Keep text from being re-read as a task box or heading.
@@ -187,7 +255,8 @@ function quote(note: string, pad: string): string[] {
 export function serializeMarkdown(root: MapNode, frontmatter = ""): string {
   const out: string[] = [];
   if (frontmatter) out.push(frontmatter.replace(/\n$/, ""));
-  out.push(`# ${root.text.replace(/\n/g, " ") || "Untitled"}${root.color ? ` <!--color:${root.color}-->` : ""}`);
+  const rbox = root.task === "todo" ? "[ ] " : root.task === "done" ? "[x] " : "";
+  out.push(`# ${rbox}${root.text.replace(/\n/g, " ") || "Untitled"}${suffix(root, false)}`);
   if (root.note.trim()) {
     out.push("");
     out.push(...quote(root.note, ""));
@@ -196,13 +265,43 @@ export function serializeMarkdown(root: MapNode, frontmatter = ""): string {
   const rec = (n: MapNode, depth: number) => {
     const pad = "  ".repeat(depth);
     const box = n.task === "todo" ? "[ ] " : n.task === "done" ? "[x] " : "";
-    const fold = n.collapsed && n.children.length ? " " + COLLAPSED : "";
-    const col = n.color ? ` <!--color:${n.color}-->` : "";
-    out.push(`${pad}- ${box}${escItem(n.text)}${fold}${col}`);
+    out.push(`${pad}- ${box}${escItem(n.text)}${suffix(n, true)}`);
     if (n.note.trim()) out.push(...quote(n.note, pad + "  "));
     for (const c of n.children) rec(c, depth + 1);
   };
   for (const c of root.children) rec(c, 0);
+  return out.join("\n") + "\n";
+}
+
+/**
+ * Export as a document: every level is a heading (# central topic, ## branches,
+ * ### sub-branches …). Below ###### topics become nested bullets. Notes become
+ * normal Markdown paragraphs under their heading. Fold state is ignored (all shown).
+ */
+export function headingsMarkdown(top: MapNode, frontmatter = ""): string {
+  const out: string[] = [];
+  if (frontmatter) out.push(frontmatter.replace(/\n$/, ""), "");
+  const box = (n: MapNode) => (n.task === "todo" ? "[ ] " : n.task === "done" ? "[x] " : "");
+  const one = (t: string) => t.replace(/\n/g, " ").trim();
+  let inList = false;
+  const rec = (n: MapNode, depth: number) => {
+    if (depth <= 5) {
+      if (out.length && out[out.length - 1] !== "") out.push("");
+      out.push(`${"#".repeat(depth + 1)} ${box(n)}${one(n.text) || "Untitled"}`);
+      out.push("");
+      if (n.note.trim()) out.push(n.note.trim(), "");
+      inList = false;
+    } else {
+      if (!inList && out.length && out[out.length - 1] !== "") out.push("");
+      inList = true;
+      const pad = "  ".repeat(depth - 6);
+      out.push(`${pad}- ${box(n)}${escItem(n.text)}`);
+      if (n.note.trim()) out.push(...quote(n.note, pad + "  "));
+    }
+    n.children.forEach((c) => rec(c, depth + 1));
+  };
+  rec(top, 0);
+  while (out.length && out[out.length - 1] === "") out.pop();
   return out.join("\n") + "\n";
 }
 
@@ -211,7 +310,7 @@ export function branchToMarkdown(n: MapNode): string {
   const out: string[] = [];
   const rec = (x: MapNode, depth: number) => {
     const box = x.task === "todo" ? "[ ] " : x.task === "done" ? "[x] " : "";
-    out.push(`${"  ".repeat(depth)}- ${box}${escItem(x.text)}${x.color ? ` <!--color:${x.color}-->` : ""}`);
+    out.push(`${"  ".repeat(depth)}- ${box}${escItem(x.text)}${x.color ? ` <!--color:${x.color}-->` : ""}${x.shape ? ` <!--shape:${x.shape}-->` : ""}`);
     if (x.note.trim()) out.push(...quote(x.note, "  ".repeat(depth + 1)));
     x.children.forEach((c) => rec(c, depth + 1));
   };

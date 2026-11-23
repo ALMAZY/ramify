@@ -1,6 +1,6 @@
 # Ramify
 
-**A keyboard-first mind map for fast notes.** Use it for lectures, meetings, research and planning. You can build a whole map without touching the mouse, and every map is a plain Markdown file in a folder you choose.
+**A keyboard-first mind map for fast notes.** Use it for lectures, meetings, research and planning. You can build a whole map without touching the mouse, and every map is a plain Markdown file in a folder you choose. Free and open source.
 
 ![Ramify](docs/screenshot.png)
 
@@ -27,31 +27,35 @@ brew install --cask ramify
 - `.AppImage` for any distro: `chmod +x Ramify_*.AppImage && ./Ramify_*.AppImage`
 
 > **First launch.** The builds are not signed with a paid certificate yet, so your system may warn you once.
-> - **macOS** (if you used the `.dmg`): open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. You can also run `xattr -dr com.apple.quarantine /Applications/Ramify.app`. Homebrew installs skip this step.
+> - **macOS** (if you used the `.dmg`): open **System Settings → Privacy & Security** and click **Open Anyway**. You can also run `xattr -dr com.apple.quarantine /Applications/Ramify.app`. Homebrew installs skip this step.
 > - **Windows** SmartScreen: click **More info → Run anyway**.
-
-## Why Ramify
-
-- **Fast typing.** Type a topic, press `Enter` for the next one, `Tab` to go one level deeper and `Shift+Tab` to come back out. You don't have to stop and think about the tree.
-- **No lock-in.** A map is one `.md` file with a nested list. There's no database, account or cloud. It works with Obsidian, VS Code, git and Syncthing.
-- **Two views of one map.** The mind map gives you the overview. The outline view (`⌘2`) is for typing at speed.
-- **Small and native.** Built with Tauri, so the download is a few MB, not hundreds. Runs on macOS, Windows and Linux.
 
 ## Features
 
-- Mind map and right-tree layouts (`⌘L`), automatic layout, coloured branches
-- Topic colours: 9 theme-aware colours with `⌥1`–`⌥9`, any custom colour from `⌘⇧C`, `⌥0` for automatic. A colour carries down its branch
-- Outline view of the same map
-- Markdown notes on any topic (`⌘E`)
-- Checkbox topics, none → todo → done (`⌘Enter`)
-- Fold and unfold branches, and focus mode to zoom into one branch (`⌘]` / `⌘[`)
-- Command palette with every action (`⌘K`), find topic (`⌘F`), map switcher (`⌘P`)
-- Paste any outline or indented text as topics. Copy a branch as Markdown
-- Drag and drop to rearrange
-- Full undo and redo
-- Export to Markdown, OPML, SVG and PNG. Import from Markdown, OPML and plain text
-- Light and dark themes (follows the system)
-- Picks up edits made in another app (for example Obsidian) when you switch back
+| | |
+|---|---|
+| **Keyboard-first** | Build and navigate whole maps without the mouse. `?` shows every shortcut. |
+| **Command palette** | Every action on `⌘K`, with fuzzy search. |
+| **Rich notes** | Markdown notes on any topic (`⌘E`): bold, links, tables, code, rendered in place. |
+| **Task lists** | Checkbox topics (`⌘↩`) and `- [ ]` checklists inside notes, with a progress chip on the topic. |
+| **Attachments** | Drop images, PDFs or any file on a topic, or press `⌘⇧A`. Images show on the map. |
+| **Cross-links** | Connect any two topics with a dashed arrow (`⌘⇧L`). Jump along with `⌘G`. |
+| **Daily notes** | `⌘⇧D` opens today's map in `Daily/YYYY-MM-DD.md`, the same naming as Obsidian. |
+| **Search** | `⌘F` finds in the current map, `⌘⇧F` searches every map (text and notes). |
+| **Node styles** | 9 colours plus any custom colour, 4 shapes, and 60+ icons. |
+| **16 themes** | Light, dark and in between, with a live preview (`⌘⇧T`). |
+| **4 layouts** | Mind map, tree right, tree left, org chart (`⌘L`). Saved per map. |
+| **Outline view** | Edit the same map as a list (`⌘2`), the fastest way to type in a lecture. |
+| **Folders** | Organise maps in sub-folders. Move a map with `⌘⇧M`. |
+| **Present mode** | Full screen, one slide per branch, with notes as captions (`⌘⇧↩`). |
+| **AI Assist** | Expand a topic, suggest next steps, summarise a branch, compare options. Use your own provider: Claude, OpenAI, OpenRouter, or a free local model with Ollama or LM Studio. |
+| **Focus mode** | Zoom into one branch (`⌘]` / `⌘[`). |
+| **Drag & drop** | Rearrange topics with the mouse, or `⌥` + arrows. |
+| **Export** | PNG, PDF, SVG, Markdown (as headings or as a list), HTML, OPML, JSON, plain text. |
+| **Import** | XMind, FreeMind/Freeplane, OPML, Markdown, plain text, JSON. |
+| **Sync** | Your maps are files. Put the folder in iCloud Drive, Dropbox, OneDrive, Syncthing or git, and Ramify picks up changes from other devices live. |
+| **Offline** | Everything works offline. No account and no server. |
+| **Full undo** | Every change is reversible (`⌘Z` / `⌘⇧Z`). |
 
 ## Keyboard
 
@@ -66,11 +70,15 @@ brew install --cask ramify
 | `⌥` + arrows | Move topic up/down, in/out |
 | `⌫` | Delete topic |
 | `⌘.` | Fold / unfold |
-| `⌘Enter` | Toggle checkbox |
-| `⌥1`–`⌥9` / `⌥0` | Set colour / automatic. `⌘⇧C` opens the colour picker |
-| `⌘E` | Notes |
+| `⌘↩` | Toggle checkbox |
+| `⌥1`–`⌥9` / `⌥0` | Colour / automatic (`⌘⇧C`: colour picker) |
+| `⌘⇧S` / `⌘I` | Shape / icon |
+| `⌘E` | Notes (Esc returns to the map) |
+| `⌘⇧A` / `⌘⇧V` | Attach files / open an attachment |
+| `⌘⇧L` / `⌘G` | Link to a topic / go to a linked topic |
 | `⌘]` / `⌘[` | Focus in / out |
 | `⌘C` `⌘X` `⌘V` `⌘D` | Copy, cut, paste, duplicate branch |
+| `⌘⇧I` | AI: expand topic |
 
 | Typing in a topic | |
 |---|---|
@@ -83,37 +91,55 @@ brew install --cask ramify
 | Anywhere | |
 |---|---|
 | `⌘K` | Command palette |
-| `⌘F` | Find topic |
-| `⌘N` / `⌘P` | New map / open map |
+| `⌘F` / `⌘⇧F` | Find in map / search all maps |
+| `⌘N` / `⌘P` / `⌘⇧D` | New map / open map / daily note |
 | `⌘1` / `⌘2` | Map / outline view |
-| `⌘L` | Switch layout |
+| `⌘L` / `⌘⇧T` | Layout / theme |
+| `⌘⇧↩` or `F5` | Present |
 | `⌘0` `⌘=` `⌘-` | Fit, zoom in, zoom out |
 | `⌘Z` / `⌘⇧Z` | Undo / redo |
 | `⌘B` | Toggle sidebar |
 
+## AI Assist
+
+Run **⌘K → "AI: settings"** and pick a provider:
+
+- **Claude (Anthropic API):** paste a key from console.anthropic.com.
+- **OpenAI** or **OpenRouter:** paste a key and enter a model name.
+- **Ollama** or **LM Studio:** free and private, running on your own computer. No key needed.
+
+The key is stored only on your computer. Map text is sent only when you run an AI command, and only the branch you run it on (plus the path to it).
+
 ## File format
 
 ```markdown
-# Algorithms — Lecture 3
+---
+ramify-layout: down
+---
+# Algorithms — Lecture 3 ^root
 > Prof. Smith, room 204
 
-- Quicksort
+- Quicksort <!--color:blue--> <!--shape:pill--> <!--link:ms1-->
   > Pivot choice matters.
+  >
+  > - [ ] re-read chapter 7
+  > ![board](attachments/board.jpg)
   - [ ] review partition
   - [x] average O(n log n)
-- Merge sort <!--collapsed-->
+- 🔥 Merge sort <!--collapsed--> ^ms1
   - stable
 ```
 
 - `# heading` is the central topic. The file name follows it.
 - Nested `-` items are topics, two spaces per level.
-- `>` lines under an item are that topic's notes (Markdown).
-- `[ ]` / `[x]` makes a checkbox topic.
-- `<!--color:blue-->` or `<!--color:#0b7285-->` sets a topic colour. Hidden in Obsidian's reading view.
-- `<!--collapsed-->` remembers a folded branch. Obsidian hides it in reading view.
-- YAML front matter is kept as it is.
+- `>` lines under an item are that topic's notes (Markdown, including checklists and attachments).
+- `[ ]` / `[x]` makes a checkbox topic. A leading emoji is the topic's icon.
+- `<!--color:…-->`, `<!--shape:…-->`, `<!--collapsed-->` and `<!--link:id-->` are hidden in Obsidian's reading view.
+- `^id` at the end of an item is an Obsidian block id. Cross-links point to it.
+- Attachments are copied into an `attachments/` folder inside your maps folder.
+- `ramify-layout` in the front matter stores the map's layout. Other front matter is kept as it is.
 
-Import is more lenient. It also accepts `##` headings, `*`/`+`/`1.` bullets, tabs and plain paragraphs, so most existing Markdown notes open as a sensible map.
+Import is more lenient. It also accepts `##` headings, `*`/`+`/`1.` bullets, tabs and plain paragraphs.
 
 ## Build from source
 
@@ -127,7 +153,7 @@ You need [Node.js 20+](https://nodejs.org/) and [Rust](https://rustup.rs/).
 npm install
 npm run tauri dev      # desktop app with hot reload
 npm run tauri build    # installers in src-tauri/target/release/bundle/
-npm test               # parser and model tests
+npm test               # unit tests
 ```
 
 To work on the UI without Rust, run `npm run dev` and open http://localhost:1420. In a plain browser, maps are kept in localStorage.
@@ -137,29 +163,28 @@ To work on the UI without Rust, run `npm run dev` and open http://localhost:1420
 ```
 src/
   model.ts      tree data, structural operations, undo history
-  markdown.ts   Markdown <-> tree (the file format)
-  opml.ts       OPML import/export
-  layout.ts     tree layout (mind map / right tree)
-  mapview.ts    map rendering, camera, mouse, inline editing
+  markdown.ts   Markdown <-> tree (the file format), headings export
+  layout.ts     the four layouts, edge and link paths
+  mapview.ts    map rendering, camera, mouse, inline editing, navigation
   outline.ts    outline view
-  app.ts        state, commands, keyboard, saving
-  palette.ts    command palette
-  exporter.ts   SVG / PNG export
+  app.ts        state, commands, keyboard, saving, sync
+  notes.ts      rendered notes, checklists, attachments
+  themes.ts     16 themes          colors.ts   topic colours
+  icons.ts      icon list          palette.ts  command palette
+  present.ts    present mode       ai.ts / settings.ts   AI Assist
+  importers.ts  XMind, FreeMind, JSON, OPML, Markdown, text
+  exporter.ts   SVG, PNG, PDF, HTML, JSON, text
   storage.ts    folder storage (desktop) / localStorage (browser)
-src-tauri/      Rust shell: read/write/rename/trash commands
+src-tauri/      Rust: files, folders, attachments, trash, open, HTTP for AI
 tests/          Vitest tests
-scripts/        release helpers (Homebrew cask)
+scripts/        release helpers (publish, Homebrew cask)
 ```
 
-There's no UI framework, just TypeScript and DOM. Every keyboard action is a command in `app.ts → buildCommands()`, so a new command shows up in the palette and the help screen automatically. See [CONTRIBUTING.md](CONTRIBUTING.md).
+There's no UI framework, just TypeScript and DOM. Every action is a command in `app.ts → buildCommands()`, so a new command shows up in the palette and the help screen automatically. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Roadmap
 
-- [ ] Cross-links between topics
-- [ ] Present mode (step through branches)
-- [ ] Images and attachments in notes
-- [ ] Rendered Markdown preview for notes
-- [ ] More layouts (down tree, org chart)
+- [ ] Version history (browse and restore earlier versions)
 - [ ] winget (Windows) and Flathub (Linux) packages
 - [ ] Signed and notarized macOS build
 - [ ] iPad / mobile

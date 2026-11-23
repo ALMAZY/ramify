@@ -7,6 +7,10 @@ export interface PaletteItem {
   extra?: string; // searchable but not shown (e.g. note text)
   weak?: boolean; // shown only when the query matches
   swatch?: string; // CSS colour for a dot before the label, or "auto"
+  icon?: string; // short text/emoji shown before the label
+  svg?: string; // inner SVG markup (24×16 viewBox) shown before the label
+  /** Called when the item is highlighted (live preview). */
+  preview?: () => void;
   run: () => unknown;
 }
 
@@ -39,6 +43,8 @@ export class Palette {
   private shown: PaletteItem[] = [];
   private idx = 0;
   private onClose: (() => void) | null = null;
+  private onCancel: (() => void) | null = null;
+  private promptResolve: ((v: string | null) => void) | null = null;
 
   constructor() {
     this.input.addEventListener("input", () => this.filter());
@@ -52,6 +58,15 @@ export class Palette {
         this.move(-1);
       } else if (k === "Enter") {
         e.preventDefault();
+        if (this.promptResolve) {
+          const r = this.promptResolve;
+          const v = this.input.value.trim();
+          this.promptResolve = null;
+          this.onCancel = null;
+          this.close();
+          r(v);
+          return;
+        }
         this.choose(this.idx);
       } else if (k === "Escape") {
         e.preventDefault();
@@ -77,14 +92,27 @@ export class Palette {
     return !this.el.hidden;
   }
 
-  open(items: PaletteItem[], placeholder: string, onClose?: () => void) {
+  open(items: PaletteItem[], placeholder: string, onClose?: () => void, onCancel?: () => void) {
     this.items = items;
     this.onClose = onClose ?? null;
+    this.onCancel = onCancel ?? null;
+    this.promptResolve = null;
     this.input.placeholder = placeholder;
     this.input.value = "";
     this.el.hidden = false;
     this.filter();
     this.input.focus();
+  }
+
+  /** Ask for a line of text. Resolves null on Escape. */
+  prompt(placeholder: string, initial = ""): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.open([], placeholder, undefined, () => resolve(null));
+      this.promptResolve = resolve;
+      this.input.value = initial;
+      this.input.select();
+      this.list.innerHTML = `<li class="none">Enter to confirm · Esc to cancel</li>`;
+    });
   }
 
   confirm(message: string, okLabel: string): Promise<boolean> {
@@ -108,12 +136,21 @@ export class Palette {
   close() {
     this.el.hidden = true;
     this.input.readOnly = false;
+    const cancel = this.onCancel;
+    this.onCancel = null;
+    if (this.promptResolve) {
+      const r = this.promptResolve;
+      this.promptResolve = null;
+      r(null);
+    }
+    cancel?.();
     const cb = this.onClose;
     this.onClose = null;
     cb?.();
   }
 
   private filter() {
+    if (this.promptResolve) return;
     const q = this.input.value.trim();
     if (!q) this.shown = this.items.filter((i) => !i.weak).slice(0, 200);
     else {
@@ -138,11 +175,12 @@ export class Palette {
       ? this.shown
           .map(
             (it, i) =>
-              `<li data-i="${i}" class="${i === this.idx ? "on" : ""}">${it.swatch ? `<span class="sw${it.swatch === "auto" ? " auto" : ""}"${it.swatch === "auto" ? "" : ` style="background:${escapeHtml(it.swatch)}"`}></span>` : ""}<span class="pl">${escapeHtml(it.label)}</span><span class="ph">${escapeHtml(it.hint)}</span>${it.keys ? `<kbd>${escapeHtml(it.keys)}</kbd>` : ""}</li>`,
+              `<li data-i="${i}" class="${i === this.idx ? "on" : ""}">${it.svg ? `<svg class="psvg" viewBox="0 0 24 18">${it.svg}</svg>` : ""}${it.icon ? `<span class="pi">${escapeHtml(it.icon)}</span>` : ""}${it.swatch ? `<span class="sw${it.swatch === "auto" ? " auto" : ""}"${it.swatch === "auto" ? "" : ` style="background:${escapeHtml(it.swatch)}"`}></span>` : ""}<span class="pl">${escapeHtml(it.label)}</span><span class="ph">${escapeHtml(it.hint)}</span>${it.keys ? `<kbd>${escapeHtml(it.keys)}</kbd>` : ""}</li>`,
           )
           .join("")
       : `<li class="none">No matches</li>`;
     this.list.querySelector("li.on")?.scrollIntoView({ block: "nearest" });
+    this.shown[this.idx]?.preview?.();
   }
 
   private move(d: number) {
@@ -155,6 +193,7 @@ export class Palette {
     const it = this.shown[i];
     if (!it) return;
     this.onClose = null; // the action decides where focus goes
+    this.onCancel = null;
     this.el.hidden = true;
     this.input.readOnly = false;
     void Promise.resolve(it.run()).finally(() => {

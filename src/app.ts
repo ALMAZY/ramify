@@ -1,17 +1,28 @@
 import {
   MapNode, History, find, makeNode, addChild, addSibling, remove, indent, outdent, moveSibling,
-  cycleTask, setCollapsedAll, visibleOrder, pathTo, reId, walk, isAncestor,
+  cycleTask, setCollapsedAll, visibleOrder, pathTo, reId, walk, isAncestor, newAnchor, findByAnchor,
+  Shape,
 } from "./model";
-import { parseMarkdown, serializeMarkdown, branchToMarkdown, parsePastedText } from "./markdown";
-import { toOPML, fromOPML } from "./opml";
-import { Store, MapEntry, createStore, fileNameFor } from "./storage";
+import { parseMarkdown, serializeMarkdown, branchToMarkdown, parsePastedText, headingsMarkdown } from "./markdown";
+import { toOPML } from "./opml";
+import { Store, MapEntry, createStore, fileNameFor, dirOf, baseOf, relLink, isImage, resolveLink } from "./storage";
 import { chord, prettyChord } from "./keys";
-import { LayoutKind } from "./layout";
+import { LayoutKind, LAYOUTS } from "./layout";
 import { MapView } from "./mapview";
 import { OutlineView } from "./outline";
 import { Palette, PaletteItem } from "./palette";
-import { exportSVG, exportPNG } from "./exporter";
+import { exportSVG, exportPNG, exportPDF, exportHTML, exportJSON, exportText } from "./exporter";
 import { COLOR_NAMES, cssColor, hexColor, resolveColors } from "./colors";
+import { THEMES, applyTheme } from "./themes";
+import { renderNote, toggleTask, noteLinks } from "./notes";
+import { importAny, IMPORT_EXTENSIONS } from "./importers";
+import { Presenter } from "./present";
+import { AI_ACTIONS, AIAction, buildPrompt, cleanList, complete, loadAISettings } from "./ai";
+import { openAISettings } from "./settings";
+import { ICONS } from "./icons";
+import { SHAPE_LIST, shapeIcon } from "./shapes";
+import { icon } from "./ui-icons";
+import { showMenu } from "./menu";
 
 export interface Command {
   id: string;
@@ -47,13 +58,22 @@ export class App {
   editing: string | null = null;
   focusId: string | null = null;
   view: View = "map";
-  layout: LayoutKind = "mindmap";
-  notesOpen = false;
+  /** Default layout for maps that don't set their own. */
+  defaultLayout: LayoutKind = "mindmap";
+  /** Layout saved in this map's front matter (ramify-layout), if any. */
+  mapLayout: LayoutKind | null = null;
+  notesOpen = true;
+  notesEditing = false;
   sidebarOpen = true;
-  theme: "auto" | "light" | "dark" = "auto";
+  theme = "system";
+  /** "filled": solid coloured topics (default). "outline": outlined topics, coloured lines. */
+  mapStyle: "filled" | "outline" = "filled";
+  presenter = new Presenter(this);
 
   history = new History();
   maps: MapEntry[] = [];
+  folders: string[] = [];
+  collapsedFolders = new Set<string>(JSON.parse(localStorage.getItem("lm:folds") || "[]"));
   private saveTimer = 0;
   private dirty = false;
   private lastSaved = "";
@@ -92,6 +112,11 @@ export class App {
       }
     }
     this.applyTheme();
+    // Text colours on filled topics depend on the theme: repaint when the OS switches light/dark.
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => this.theme === "system" && this.mapView.render());
+    this.wireFileDrop();
+    // Live sync: pick up changes made by other apps / devices (iCloud, Dropbox, Syncthing, git).
+    window.setInterval(() => void this.poll(), 3000);
     await this.refreshList();
     const last = localStorage.getItem("lm:last");
     if (this.store.hasFolder()) {
@@ -107,9 +132,10 @@ export class App {
   private loadPrefs() {
     try {
       const p = JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
-      if (p.layout) this.layout = p.layout;
+      if (p.layout) this.defaultLayout = p.layout;
       if (p.view) this.view = p.view;
-      if (p.theme) this.theme = p.theme;
+      if (p.theme) this.theme = p.theme === "auto" ? "system" : p.theme;
+      if (p.mapStyle === "outline" || p.mapStyle === "filled") this.mapStyle = p.mapStyle;
       if (typeof p.sidebarOpen === "boolean") this.sidebarOpen = p.sidebarOpen;
       if (typeof p.notesOpen === "boolean") this.notesOpen = p.notesOpen;
     } catch {
@@ -119,12 +145,35 @@ export class App {
   private savePrefs() {
     localStorage.setItem(
       PREFS_KEY,
-      JSON.stringify({ layout: this.layout, view: this.view, theme: this.theme, sidebarOpen: this.sidebarOpen, notesOpen: this.notesOpen }),
+      JSON.stringify({ layout: this.defaultLayout, view: this.view, theme: this.theme, sidebarOpen: this.sidebarOpen, notesOpen: this.notesOpen, mapStyle: this.mapStyle }),
     );
   }
-  applyTheme() {
-    if (this.theme === "auto") delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = this.theme;
+  applyTheme(id = this.theme) {
+    applyTheme(id);
+    document.body.classList.toggle("style-filled", this.mapStyle === "filled");
+  }
+
+  setMapStyle(s: "filled" | "outline") {
+    this.mapStyle = s;
+    this.savePrefs();
+    this.applyTheme();
+    this.render();
+  }
+
+  get layout(): LayoutKind {
+    return this.mapLayout ?? this.defaultLayout;
+  }
+
+  /** Set this map's layout (stored in its front matter) and make it the default for new maps. */
+  setLayout(k: LayoutKind) {
+    this.mapLayout = k;
+    this.defaultLayout = k;
+    this.savePrefs();
+    this.frontmatter = setFrontmatter(this.frontmatter, "ramify-layout", k);
+    this.markDirty();
+    if (this.view !== "map") this.setView("map");
+    this.mapView.render();
+    this.mapView.fit();
   }
 
   // ---------------------------------------------------------------- accessors
@@ -219,12 +268,14 @@ export class App {
     const l = find(this.root, id);
     if (l && l.parent && !l.node.text.trim() && !l.node.children.length && !l.node.note && !opts.keepEmpty) {
       this.sel = remove(this.root, id);
+      this.history.forgetEmptyEdit(this.root, id);
       this.markDirty();
       this.render();
     } else {
       this.mapView.relayout();
     }
     this.renderSelection();
+    this.renderCrumbs();
     this.focusSink();
   }
 
@@ -313,6 +364,7 @@ export class App {
   private onKey(e: KeyboardEvent) {
     if (e.isComposing) return;
     if (this.palette.isOpen()) return; // palette handles its own keys
+    if (document.querySelector(".menu, .modal")) return; // menus and dialogs handle their own keys
     const helpEl = $("help");
     if (!helpEl.hidden) {
       if (e.key === "Escape" || e.key === "?") {
@@ -328,6 +380,8 @@ export class App {
     if (inNotes && c === "Escape") {
       e.preventDefault();
       ($("notes-text") as HTMLTextAreaElement).blur();
+      this.notesEditing = false;
+      this.renderNotes();
       this.focusSink();
       return;
     }
@@ -446,6 +500,9 @@ export class App {
     this.ensureSelVisible();
     const app = $("app");
     app.classList.toggle("no-sidebar", !this.sidebarOpen);
+    app.classList.toggle("outline", this.view === "outline");
+    $("tb-outline").classList.toggle("on", this.view === "outline");
+    $("tb-panel").classList.toggle("on", this.notesOpen);
     $("notes").hidden = !this.notesOpen;
     $("map-view").hidden = this.view !== "map";
     $("outline-view").hidden = this.view !== "outline";
@@ -464,34 +521,71 @@ export class App {
   }
 
   private renderCrumbs() {
+    $("map-title-text").textContent = this.root.text.split("\n")[0] || "Untitled";
     const nav = $("crumbs");
     nav.innerHTML = "";
-    const path = this.focusId ? pathTo(this.root, this.focusId) : [this.root];
+    if (!this.focusId) return;
+    const path = pathTo(this.root, this.focusId).slice(1);
     path.forEach((n, i) => {
-      if (i) nav.append(Object.assign(document.createElement("span"), { className: "sep", textContent: "›" }));
+      nav.append(Object.assign(document.createElement("span"), { className: "sep", textContent: "›" }));
       const b = document.createElement("button");
       b.textContent = n.text.split("\n")[0] || "Untitled";
       b.className = i === path.length - 1 ? "cur" : "";
       b.onclick = () => {
-        this.focusId = n === this.root ? null : n.id;
+        this.focusId = n.id;
         this.render();
         this.mapView.fit();
       };
       nav.append(b);
     });
-    if (this.focusId) nav.append(Object.assign(document.createElement("span"), { className: "focus-tag", textContent: "Focus" }));
+    const out = Object.assign(document.createElement("button"), { className: "focus-tag", textContent: "Focus ✕", title: "Leave focus (⌘[)" });
+    out.onclick = () => {
+      this.focusId = null;
+      this.render();
+      this.mapView.fit();
+    };
+    nav.append(out);
   }
 
-  private renderNotes() {
+
+  renderNotes() {
     if (!this.notesOpen) return;
+    this.renderInspector();
     const n = this.selNode;
     const ta = $("notes-text") as HTMLTextAreaElement;
+    const pv = $("notes-preview");
     $("notes-title").textContent = n ? n.text.split("\n")[0] || "Untitled" : "";
+    const editing = this.notesEditing || !n?.note.trim();
+    ta.hidden = !editing;
+    pv.hidden = editing;
     if (document.activeElement !== ta || ta.dataset.id !== n?.id) {
       ta.value = n?.note ?? "";
       ta.dataset.id = n?.id ?? "";
     }
     ta.disabled = !n;
+    if (!editing && n) {
+      const id = n.id;
+      renderNote(pv, n.note, this.store, this.fileName ?? "", (i) => {
+        const node = this.node(id);
+        if (!node) return;
+        this.history.push(this.root, this.sel);
+        this.setNote(id, toggleTask(node.note, i));
+        this.mapView.updateNode(id);
+        this.renderNotes();
+      });
+    }
+    $("notes-mode").textContent = editing ? "Preview" : "Edit";
+  }
+
+  /** Switch the notes panel between editing and the rendered preview. */
+  setNotesEditing(on: boolean) {
+    this.notesEditing = on;
+    this.renderNotes();
+    const ta = $("notes-text") as HTMLTextAreaElement;
+    if (on) {
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
   }
 
   renderSidebar() {
@@ -506,19 +600,55 @@ export class App {
       ul.append(li);
       return;
     }
-    const sorted = [...this.maps].sort((a, b) => b.mtime - a.mtime).filter((m) => !q || m.name.toLowerCase().includes(q));
-    for (const m of sorted) {
+    const mapItem = (m: MapEntry, depth: number) => {
       const li = document.createElement("li");
       li.dataset.name = m.name;
       li.className = m.name === this.fileName ? "cur" : "";
+      li.style.setProperty("--d", String(depth));
+      li.insertAdjacentHTML("afterbegin", icon("map", 15));
       const t = document.createElement("span");
-      t.textContent = m.name.replace(/\.md$/i, "");
+      t.textContent = (q ? m.name : baseOf(m.name)).replace(/\.md$/i, "");
       const d = document.createElement("small");
       d.textContent = relTime(m.mtime);
       li.append(t, d);
       li.onclick = () => void this.open(m.name);
       ul.append(li);
+    };
+    if (q) {
+      // Filtering: flat list of matching maps, newest first.
+      [...this.maps].sort((a, b) => b.mtime - a.mtime).filter((m) => m.name.toLowerCase().includes(q)).forEach((m) => mapItem(m, 0));
+      return;
     }
+    // Tree: folders first (A–Z), then maps (newest first).
+    const rec = (dir: string, depth: number) => {
+      const sub = this.folders.filter((f) => dirOf(f) === dir).sort((a, b) => a.localeCompare(b));
+      for (const f of sub) {
+        const li = document.createElement("li");
+        const folded = this.collapsedFolders.has(f);
+        li.className = "folder" + (folded ? " folded" : "") + (this.fileName && dirOf(this.fileName).startsWith(f) ? " has-cur" : "");
+        li.style.setProperty("--d", String(depth));
+        li.dataset.folder = f;
+        li.insertAdjacentHTML("afterbegin", `<span class="caret">${icon("chevron", 13)}</span>${icon("folder", 15)}`);
+        const t = document.createElement("span");
+        t.textContent = baseOf(f);
+        const c = document.createElement("small");
+        c.textContent = String(this.maps.filter((m) => m.name.startsWith(f + "/")).length || "");
+        li.append(t, c);
+        li.onclick = () => {
+          if (folded) this.collapsedFolders.delete(f);
+          else this.collapsedFolders.add(f);
+          localStorage.setItem("lm:folds", JSON.stringify([...this.collapsedFolders]));
+          this.renderSidebar();
+        };
+        ul.append(li);
+        if (!folded) rec(f, depth + 1);
+      }
+      this.maps
+        .filter((m) => dirOf(m.name) === dir)
+        .sort((a, b) => b.mtime - a.mtime)
+        .forEach((m) => mapItem(m, depth));
+    };
+    rec("", 0);
   }
 
   toast(msg: string) {
@@ -553,7 +683,9 @@ export class App {
       this.dirty = false;
       const text = serializeMarkdown(this.root, this.frontmatter);
       try {
-        const wanted = fileNameFor(this.root.text);
+        // The file name follows the central topic; the folder stays where it is.
+        const dir = this.fileName ? dirOf(this.fileName) : this.newMapDir;
+        const wanted = (dir ? dir + "/" : "") + fileNameFor(this.root.text);
         if (!this.fileName) {
           this.fileName = this.uniqueName(wanted);
         } else if (wanted !== this.fileName && wanted.toLowerCase() !== this.fileName.toLowerCase()) {
@@ -594,17 +726,33 @@ export class App {
 
   async refreshList() {
     try {
-      this.maps = await this.store.list();
+      const t = await this.store.list();
+      this.maps = t.files;
+      this.folders = t.folders;
     } catch (err) {
       this.maps = [];
+      this.folders = [];
       this.toast("Cannot read folder: " + String(err));
     }
+  }
+
+  /** Every few seconds: refresh the sidebar and reload the open map if another app changed it. */
+  private async poll() {
+    if (document.visibilityState === "hidden" || !this.store.hasFolder() || this.store.kind !== "desktop") return;
+    if (this.palette.isOpen() || this.presenter.active) return;
+    const before = JSON.stringify([this.maps, this.folders]);
+    const cur = this.maps.find((m) => m.name === this.fileName)?.mtime;
+    await this.refreshList();
+    if (JSON.stringify([this.maps, this.folders]) !== before) this.renderSidebar();
+    const now = this.maps.find((m) => m.name === this.fileName)?.mtime;
+    if (cur !== undefined && now !== undefined && now !== cur) await this.checkExternalChange();
   }
 
   loadDoc(text: string, name: string | null) {
     const parsed = parseMarkdown(text, name ? name.replace(/\.md$/i, "") : "Untitled");
     this.root = parsed.root;
     this.frontmatter = parsed.frontmatter;
+    this.mapLayout = layoutFrom(parsed.frontmatter);
     this.fileName = name;
     this.lastSaved = text;
     this.dirty = false;
@@ -629,13 +777,18 @@ export class App {
     }
   }
 
-  async newMap(root?: MapNode) {
+  /** Folder for the next new map: the open map's folder. */
+  newMapDir = "";
+
+  async newMap(root?: MapNode, dir?: string, edit = !root) {
     if (!this.store.hasFolder()) {
       if (!(await this.chooseFolder())) return;
     }
     await this.flush();
+    this.newMapDir = dir ?? (this.fileName ? dirOf(this.fileName) : "");
     this.root = root ?? makeNode(`Notes ${today()}`);
     this.frontmatter = "";
+    this.mapLayout = null;
     this.fileName = null;
     this.focusId = null;
     this.sel = this.root.id;
@@ -644,7 +797,18 @@ export class App {
     await this.save();
     this.render();
     this.mapView.fit(true);
-    if (!root) this.startEdit(this.root.id, "all");
+    if (edit) this.startEdit(this.root.id, "all");
+    else this.focusSink();
+  }
+
+  /** Today's daily note: Daily/YYYY-MM-DD.md (same naming as Obsidian daily notes). */
+  async openDaily() {
+    const d = today();
+    const name = `Daily/${d}.md`;
+    if (this.maps.some((m) => m.name === name)) return this.open(name);
+    const root = makeNode(d);
+    await this.newMap(root, "Daily", false);
+    this.mutate(() => addChild(this.root, this.root.id), { edit: true });
   }
 
   async chooseFolder() {
@@ -669,9 +833,10 @@ export class App {
       const selPath = this.sel ? indexPath(this.root, this.sel) : [];
       const focusPath = this.focusId ? indexPath(this.root, this.focusId) : null;
       this.history.push(this.root, this.sel);
-      const parsed = parseMarkdown(text, this.fileName.replace(/\.md$/i, ""));
+      const parsed = parseMarkdown(text, baseOf(this.fileName).replace(/\.md$/i, ""));
       this.root = parsed.root;
       this.frontmatter = parsed.frontmatter;
+      this.mapLayout = layoutFrom(parsed.frontmatter);
       this.lastSaved = text;
       this.sel = nodeAtPath(this.root, selPath)?.id ?? this.root.id;
       this.focusId = focusPath ? nodeAtPath(this.root, focusPath)?.id ?? null : null;
@@ -704,34 +869,35 @@ export class App {
   }
 
   private async importFile() {
-    const f = await this.store.importFile([{ name: "Outline", extensions: ["md", "markdown", "txt", "opml", "xml"] }]);
+    const f = await this.store.importFile([{ name: "Mind maps and outlines", extensions: IMPORT_EXTENSIONS }]);
     if (!f) return;
-    const base = f.name.replace(/\.[^.]+$/, "");
     let root: MapNode;
     try {
-      if (/\.(opml|xml)$/i.test(f.name)) root = fromOPML(f.text, base);
-      else if (/\.txt$/i.test(f.name)) {
-        root = makeNode(base);
-        root.children = parsePastedText(f.text);
-      } else root = parseMarkdown(f.text, base).root;
+      root = importAny(f.name, f.text, f.bytes);
     } catch (err) {
       this.toast("Import failed: " + String(err));
       return;
     }
-    await this.newMap(root);
+    await this.newMap(root, undefined, false);
     this.toast("Imported " + f.name);
   }
 
-  private async exportAs(kind: "md" | "opml" | "svg" | "png") {
+  private async exportAs(kind: "md" | "md-list" | "opml" | "svg" | "png" | "pdf" | "html" | "json" | "txt") {
     await this.flush();
     const top = this.top;
     const base = fileNameFor(top.text).replace(/\.md$/, "");
     try {
       let saved: string | null = null;
-      if (kind === "md") saved = await this.store.exportFile(base + ".md", top === this.root ? serializeMarkdown(this.root, this.frontmatter) : serializeMarkdown(top), { name: "Markdown", extensions: ["md"] });
+      const fm = top === this.root ? this.frontmatter : "";
+      if (kind === "md") saved = await this.store.exportFile(base + ".md", headingsMarkdown(top, fm), { name: "Markdown", extensions: ["md"] });
+      if (kind === "md-list") saved = await this.store.exportFile(base + ".md", serializeMarkdown(top, fm), { name: "Markdown", extensions: ["md"] });
       if (kind === "opml") saved = await this.store.exportFile(base + ".opml", toOPML(top), { name: "OPML", extensions: ["opml"] });
       if (kind === "svg") saved = await this.store.exportFile(base + ".svg", exportSVG(this), { name: "SVG image", extensions: ["svg"] });
       if (kind === "png") saved = await this.store.exportFile(base + ".png", await exportPNG(this), { name: "PNG image", extensions: ["png"] });
+      if (kind === "pdf") saved = await this.store.exportFile(base + ".pdf", await exportPDF(this), { name: "PDF", extensions: ["pdf"] });
+      if (kind === "html") saved = await this.store.exportFile(base + ".html", exportHTML(this), { name: "Web page", extensions: ["html"] });
+      if (kind === "json") saved = await this.store.exportFile(base + ".json", exportJSON(top), { name: "JSON", extensions: ["json"] });
+      if (kind === "txt") saved = await this.store.exportFile(base + ".txt", exportText(top), { name: "Plain text", extensions: ["txt"] });
       if (saved) this.toast("Exported " + saved.split(/[\\/]/).pop());
     } catch (err) {
       this.toast("Export failed: " + String(err));
@@ -763,6 +929,13 @@ export class App {
       })),
       { id: "color-auto", group: "Topics", title: "Colour: automatic", keys: ["Alt+0"], noHelp: true, run: () => this.setColor(undefined) },
       { id: "color-custom", group: "Topics", title: "Colour: custom…", noHelp: true, run: () => this.customColor() },
+      { id: "shape", group: "Topics", title: "Topic shape…", keys: ["Mod+Shift+S"], navOnly: false, run: () => this.openShapePicker() },
+      { id: "icon", group: "Topics", title: "Topic icon…", keys: ["Mod+I"], navOnly: false, run: () => this.openIconPicker() },
+      { id: "link", group: "Topics", title: "Link to another topic…", keys: ["Mod+Shift+L"], navOnly: false, run: () => this.linkTo() },
+      { id: "goto-link", group: "Topics", title: "Go to linked topic", keys: ["Mod+G"], navOnly: false, run: () => this.goToLink() },
+      { id: "unlink", group: "Topics", title: "Remove links from topic…", run: () => this.removeLinks() },
+      { id: "attach", group: "Topics", title: "Attach files (images, PDFs…)", keys: ["Mod+Shift+A"], navOnly: false, run: () => this.attach() },
+      { id: "open-attachment", group: "Topics", title: "Open attachment…", keys: ["Mod+Shift+V"], navOnly: false, run: () => this.openAttachmentPicker() },
       { id: "notes", group: "Topics", title: "Notes for topic", keys: ["Mod+E"], navOnly: false, run: () => this.toggleNotes() },
       { id: "copy", group: "Topics", title: "Copy branch as Markdown", keys: ["Mod+C"], run: () => this.copyBranch(false) },
       { id: "cut", group: "Topics", title: "Cut branch", keys: ["Mod+X"], run: () => this.copyBranch(true) },
@@ -783,29 +956,46 @@ export class App {
       { id: "palette", group: "View", title: "Command palette", keys: ["Mod+K", "Mod+Shift+P"], navOnly: false, run: () => this.openCommands() },
       { id: "view-map", group: "View", title: "Map view", keys: ["Mod+1"], navOnly: false, run: () => this.setView("map") },
       { id: "view-outline", group: "View", title: "Outline view", keys: ["Mod+2"], navOnly: false, run: () => this.setView("outline") },
-      { id: "layout", group: "View", title: "Switch layout (mind map ↔ right tree)", keys: ["Mod+L"], navOnly: false, run: () => this.toggleLayout() },
+      { id: "layout", group: "View", title: "Layout…", keys: ["Mod+L"], navOnly: false, run: () => this.openLayoutPicker() },
+      ...LAYOUTS.map((l) => ({ id: "layout-" + l.id, group: "View", title: `Layout: ${l.name}`, noHelp: true, run: () => this.setLayout(l.id) })),
+      { id: "style-filled", group: "View", title: "Map style: filled topics", noHelp: true, run: () => this.setMapStyle("filled") },
+      { id: "style-outline", group: "View", title: "Map style: outlined topics", noHelp: true, run: () => this.setMapStyle("outline") },
+      { id: "present", group: "View", title: "Present mode", keys: ["Mod+Shift+Enter", "F5"], navOnly: false, run: () => this.presenter.start() },
       { id: "zoom-in", group: "View", title: "Zoom in", keys: ["Mod+="], navOnly: false, run: () => this.mapView.zoomBy(1.2) },
       { id: "zoom-out", group: "View", title: "Zoom out", keys: ["Mod+-"], navOnly: false, run: () => this.mapView.zoomBy(1 / 1.2) },
       { id: "fit", group: "View", title: "Fit map to window", keys: ["Mod+0"], navOnly: false, run: () => this.mapView.fit() },
       { id: "center", group: "View", title: "Center selected topic", keys: ["Mod+J"], run: () => this.sel && this.mapView.center(this.sel) },
+      { id: "panel", group: "View", title: "Toggle style panel", keys: ["Mod+Shift+\\"], navOnly: false, run: () => this.togglePanel() },
       { id: "sidebar", group: "View", title: "Toggle sidebar", keys: ["Mod+B", "Mod+\\"], navOnly: false, run: () => ((this.sidebarOpen = !this.sidebarOpen), this.savePrefs(), this.render()) },
-      { id: "theme", group: "View", title: "Theme: auto → light → dark", run: () => this.cycleTheme() },
+      { id: "theme", group: "View", title: "Theme…", keys: ["Mod+Shift+T"], navOnly: false, run: () => this.openThemePicker() },
       { id: "help", group: "View", title: "Keyboard shortcuts", keys: ["?", "F1"], run: () => this.showHelp() },
       // Edit
       { id: "undo", group: "Edit", title: "Undo", keys: ["Mod+Z"], navOnly: true, run: () => this.undo() },
       { id: "redo", group: "Edit", title: "Redo", keys: ["Mod+Shift+Z", "Mod+Y"], navOnly: true, run: () => this.redo() },
       // Maps
       { id: "new", group: "Maps", title: "New map", keys: ["Mod+N"], navOnly: false, run: () => this.newMap() },
+      { id: "daily", group: "Maps", title: "Today's daily note", keys: ["Mod+Shift+D"], navOnly: false, run: () => this.openDaily() },
+      { id: "search-all", group: "Maps", title: "Search all maps…", keys: ["Mod+Shift+F"], navOnly: false, run: () => this.searchAllMaps() },
+      { id: "new-folder", group: "Maps", title: "New folder…", run: () => this.newFolder() },
+      { id: "move-map", group: "Maps", title: "Move map to folder…", keys: ["Mod+Shift+M"], navOnly: false, run: () => this.moveToFolder() },
       { id: "switch", group: "Maps", title: "Open map…", keys: ["Mod+P", "Mod+O"], navOnly: false, run: () => this.openSwitcher() },
       { id: "rename", group: "Maps", title: "Rename map", keys: ["Mod+R"], navOnly: false, run: () => this.startEdit(this.root.id, "all") },
       { id: "delete-map", group: "Maps", title: "Move map to Trash", run: () => this.deleteMap() },
       { id: "folder", group: "Maps", title: "Choose maps folder…", run: () => void this.chooseFolder() },
       { id: "save", group: "Maps", title: "Save now", keys: ["Mod+S"], navOnly: false, run: () => ((this.dirty = true), this.save()) },
-      { id: "import", group: "Maps", title: "Import Markdown / OPML / text…", keys: ["Mod+Shift+O"], navOnly: false, run: () => this.importFile() },
-      { id: "export-md", group: "Export", title: "Export Markdown", run: () => this.exportAs("md") },
+      { id: "import", group: "Maps", title: "Import XMind / FreeMind / OPML / Markdown / text…", keys: ["Mod+Shift+O"], navOnly: false, run: () => this.importFile() },
+      // AI
+      ...AI_ACTIONS.map((a) => ({ id: "ai-" + a.id, group: "AI", title: a.title, keys: a.keys ? [a.keys] : undefined, navOnly: false, run: () => this.runAI(a.id) })),
+      { id: "ai-settings", group: "AI", title: "AI: settings (provider, model, key)…", run: () => openAISettings(this.store, (m) => this.toast(m)).then(() => this.focusSink()) },
+      { id: "export-md", group: "Export", title: "Export Markdown (headings: # ## ###)", run: () => this.exportAs("md") },
+      { id: "export-md-list", group: "Export", title: "Export Markdown (nested list)", run: () => this.exportAs("md-list") },
       { id: "export-opml", group: "Export", title: "Export OPML", run: () => this.exportAs("opml") },
       { id: "export-svg", group: "Export", title: "Export SVG image", run: () => this.exportAs("svg") },
       { id: "export-png", group: "Export", title: "Export PNG image", keys: ["Mod+Shift+E"], navOnly: false, run: () => this.exportAs("png") },
+      { id: "export-pdf", group: "Export", title: "Export PDF", run: () => this.exportAs("pdf") },
+      { id: "export-html", group: "Export", title: "Export web page (HTML)", run: () => this.exportAs("html") },
+      { id: "export-json", group: "Export", title: "Export JSON", run: () => this.exportAs("json") },
+      { id: "export-txt", group: "Export", title: "Export plain text", run: () => this.exportAs("txt") },
     ];
     this.commands = C;
     for (const c of C) for (const k of c.keys ?? []) {
@@ -815,14 +1005,14 @@ export class App {
   }
 
   setColor(color: string | undefined) {
-    const n = this.selNode;
-    if (!n) return;
-    if (this.editing) this.stopEdit();
-    this.mutate(() => {
-      if (color) n.color = color;
-      else delete n.color;
+    this.styleSelected((x) => {
+      if (color) x.color = color;
+      else delete x.color;
     });
   }
+
+  /** Apply style changes to the whole branch ("Children too" in the style panel). */
+  styleChildren = false;
 
   private openColorPicker() {
     const n = this.selNode;
@@ -911,8 +1101,7 @@ export class App {
     this.notesOpen = true;
     this.savePrefs();
     this.render();
-    ta.focus();
-    ta.setSelectionRange(ta.value.length, ta.value.length);
+    this.setNotesEditing(true);
   }
 
   private copyBranch(cut: boolean) {
@@ -964,22 +1153,377 @@ export class App {
     this.focusSink();
   }
 
-  private toggleLayout() {
-    this.layout = this.layout === "mindmap" ? "right" : "mindmap";
-    this.savePrefs();
-    if (this.view !== "map") this.setView("map");
-    this.render();
-    this.mapView.fit();
-    this.toast(this.layout === "mindmap" ? "Layout: mind map" : "Layout: right tree");
+  private openLayoutPicker() {
+    const cur = this.layout;
+    const items: PaletteItem[] = LAYOUTS.map((l) => ({
+      label: l.name + (l.id === cur ? "  ✓" : ""),
+      hint: l.id === "mindmap" ? "branches on both sides" : l.id === "down" ? "top to bottom" : "one side",
+      keys: "",
+      run: () => this.setLayout(l.id),
+    }));
+    this.palette.open(items, "Layout for this map", () => this.focusSink());
   }
 
-  private cycleTheme() {
-    this.theme = this.theme === "auto" ? "light" : this.theme === "light" ? "dark" : "auto";
-    this.applyTheme();
-    this.savePrefs();
-    this.mapView.relayout();
-    this.toast("Theme: " + this.theme);
+  private openThemePicker() {
+    const original = this.theme;
+    const items: PaletteItem[] = [{ id: "system", name: "System (light/dark)", dark: false }, ...THEMES].map((t: any) => ({
+      label: t.name + (t.id === original ? "  ✓" : ""),
+      hint: t.id === "system" ? "follows your OS" : t.dark ? "dark" : "light",
+      keys: "",
+      swatch: t.branches ? t.rootBg : "auto",
+      preview: () => {
+        this.applyTheme(t.id);
+        this.mapView.render();
+      },
+      run: () => {
+        this.theme = t.id;
+        this.savePrefs();
+        this.applyTheme();
+        this.mapView.render();
+      },
+    }));
+    this.palette.open(items, "Theme (↑↓ to preview)", () => this.focusSink(), () => {
+      this.applyTheme(original);
+      this.mapView.render();
+    });
   }
+
+  /** Apply a style change to the selected topic (and its whole branch when "Children too" is on). */
+  styleSelected(fn: (n: MapNode) => void) {
+    const n = this.selNode;
+    if (!n) return;
+    if (this.editing) this.stopEdit();
+    this.mutate(() => {
+      if (this.styleChildren) walk(n, fn);
+      else fn(n);
+    });
+  }
+
+  setShape(s: Shape | undefined) {
+    this.styleSelected((x) => {
+      if (s) x.shape = s;
+      else delete x.shape;
+    });
+  }
+
+  private openShapePicker() {
+    const n = this.selNode;
+    if (!n) return;
+    if (this.editing) this.stopEdit();
+    const items: PaletteItem[] = [
+      { label: "Automatic" + (!n.shape ? "  ✓" : ""), hint: "by level", keys: "", icon: "◌", run: () => this.setShape(undefined) },
+      ...SHAPE_LIST.map((sh) => ({
+        label: sh.name + (n.shape === sh.id ? "  ✓" : ""),
+        hint: "",
+        keys: "",
+        svg: shapeIcon(sh.id),
+        run: () => this.setShape(sh.id),
+      })),
+    ];
+    this.palette.open(items, "Shape", () => this.focusSink());
+  }
+
+
+  /** Icon = an emoji at the start of the topic text (shows up in Obsidian too). */
+  private openIconPicker() {
+    const n = this.selNode;
+    if (!n) return;
+    if (this.editing) this.stopEdit();
+    const lead = n.text.match(/^(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)\s*/u);
+    const items: PaletteItem[] = ICONS.map(([emoji, name]) => ({
+      label: name,
+      hint: "",
+      keys: "",
+      icon: emoji,
+      run: () =>
+        this.mutate(() => {
+          n.text = emoji + " " + (lead ? n.text.slice(lead[0].length) : n.text);
+        }),
+    }));
+    if (lead) items.unshift({ label: "Remove icon", hint: lead[1], keys: "", icon: "✕", run: () => this.mutate(() => void (n.text = n.text.slice(lead[0].length))) });
+    this.palette.open(items, "Icon (type to search)", () => this.focusSink());
+  }
+
+  /** Cross-link: pick a target topic by name. */
+  private linkTo() {
+    const from = this.selNode;
+    if (!from) return;
+    if (this.editing) this.stopEdit();
+    const items: PaletteItem[] = [];
+    walk(this.root, (n) => {
+      if (n === from) return;
+      const path = pathTo(this.root, n.id).slice(1, -1).map((x) => x.text.split("\n")[0]).join(" › ");
+      items.push({
+        label: n.text.split("\n")[0] || "Untitled",
+        hint: path,
+        keys: "",
+        run: () =>
+          this.mutate(() => {
+            n.anchor ??= newAnchor(this.root);
+            from.links = [...new Set([...(from.links ?? []), n.anchor])];
+          }),
+      });
+    });
+    this.palette.open(items, `Link “${(from.text.split("\n")[0] || "topic").slice(0, 30)}” to…`, () => this.focusSink());
+  }
+
+  /** Jump along a cross-link (outgoing first, then incoming). */
+  private goToLink() {
+    const n = this.selNode;
+    if (!n) return;
+    const targets: MapNode[] = [];
+    for (const a of n.links ?? []) {
+      const t = findByAnchor(this.root, a);
+      if (t) targets.push(t);
+    }
+    if (n.anchor) walk(this.root, (x) => x.links?.includes(n.anchor!) && targets.push(x));
+    if (!targets.length) return this.toast("This topic has no links");
+    const go = (t: MapNode) => {
+      for (const p of pathTo(this.root, t.id).slice(0, -1)) p.collapsed = false;
+      if (this.focusId && !isAncestor(this.root, this.focusId, t.id)) this.focusId = null;
+      this.sel = t.id;
+      this.render();
+      this.mapView.center(t.id);
+    };
+    if (targets.length === 1) return go(targets[0]);
+    this.palette.open(
+      targets.map((t) => ({ label: t.text.split("\n")[0] || "Untitled", hint: n.links?.includes(t.anchor ?? "-") ? "→ links to" : "← linked from", keys: "", run: () => go(t) })),
+      "Go to linked topic",
+      () => this.focusSink(),
+    );
+  }
+
+  private removeLinks() {
+    const n = this.selNode;
+    if (!n?.links?.length) return this.toast("This topic has no outgoing links");
+    const items: PaletteItem[] = n.links.map((a) => {
+      const t = findByAnchor(this.root, a);
+      return { label: "Remove link to " + (t?.text.split("\n")[0] ?? "(missing topic)"), hint: "", keys: "", run: () => this.mutate(() => void (n.links = n.links!.filter((x) => x !== a))) };
+    });
+    items.unshift({ label: "Remove all links", hint: "", keys: "", run: () => this.mutate(() => void delete n.links) });
+    this.palette.open(items, "Remove links", () => this.focusSink());
+  }
+
+  /** Attach files to a topic: copies them into the attachments folder and links them in the notes. */
+  async attach(paths?: string[], targetId?: string) {
+    const id = targetId ?? this.sel;
+    if (!id || !this.store.hasFolder()) return;
+    if (this.editing) this.stopEdit();
+    await this.flush();
+    if (!this.fileName) return this.toast("Save the map first");
+    let rels: string[];
+    try {
+      rels = paths ? await this.store.attachPaths(paths) : await this.store.pickAttachments();
+    } catch (err) {
+      return this.toast("Attach failed: " + String(err));
+    }
+    if (!rels.length) return;
+    const n = this.node(id);
+    if (!n) return;
+    const lines = rels.map((r) => {
+      const link = relLink(this.fileName!, r).split("/").map(encodeURIComponent).join("/");
+      const name = baseOf(r);
+      return isImage(r) ? `![${name}](${link})` : `[📎 ${name}](${link})`;
+    });
+    this.mutate(() => void (n.note = (n.note.trim() ? n.note.trimEnd() + "\n\n" : "") + lines.join("\n")));
+    this.sel = id;
+    this.notesOpen = true;
+    this.notesEditing = false;
+    this.savePrefs();
+    this.render();
+    this.toast(`Attached ${rels.length} file${rels.length > 1 ? "s" : ""}`);
+  }
+
+  private openAttachmentPicker() {
+    const n = this.selNode;
+    const links = n ? noteLinks(n.note) : [];
+    if (!links.length || !this.fileName) return this.toast("No attachments on this topic");
+    const items: PaletteItem[] = links.map((l) => ({
+      label: decodeURIComponent(l.href.split("/").pop() ?? l.href),
+      hint: l.image ? "image" : "file",
+      keys: "",
+      icon: l.image ? "🖼" : "📎",
+      run: async () => {
+        const rel = resolveLink(this.fileName!, l.href);
+        if (rel) await this.store.openFile(rel).catch((e) => this.toast(String(e)));
+      },
+    }));
+    this.palette.open(items, "Open attachment", () => this.focusSink());
+  }
+
+  /** Files dropped from Finder / Explorer onto the window attach to the topic under the pointer. */
+  private async wireFileDrop() {
+    if (this.store.kind !== "desktop") return;
+    try {
+      const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+      await getCurrentWebview().onDragDropEvent((ev) => {
+        const p = ev.payload as any;
+        document.querySelectorAll(".node.drop-file").forEach((x) => x.classList.remove("drop-file"));
+        if (p.type === "over" || p.type === "enter") {
+          const pos = p.position;
+          const el = pos ? document.elementFromPoint(pos.x / devicePixelRatio, pos.y / devicePixelRatio)?.closest<HTMLElement>(".node, .o-row") : null;
+          el?.classList.add("drop-file");
+        } else if (p.type === "drop" && p.paths?.length) {
+          const pos = p.position;
+          const el = pos ? document.elementFromPoint(pos.x / devicePixelRatio, pos.y / devicePixelRatio)?.closest<HTMLElement>(".node, .o-row") : null;
+          void this.attach(p.paths, el?.dataset.id ?? this.sel ?? undefined);
+        }
+      });
+    } catch {
+      /* drag and drop not available */
+    }
+  }
+
+  /** Search the text and notes of every map in the folder. */
+  private async searchAllMaps() {
+    if (this.editing) this.stopEdit();
+    await this.flush();
+    this.toast("Searching…");
+    const items: PaletteItem[] = [];
+    const cache = (this as any)._searchCache ?? ((this as any)._searchCache = new Map<string, { mtime: number; root: MapNode }>());
+    for (const m of this.maps) {
+      let hit = cache.get(m.name);
+      if (!hit || hit.mtime !== m.mtime) {
+        try {
+          const text = await this.store.read(m.name);
+          hit = { mtime: m.mtime, root: parseMarkdown(text, baseOf(m.name).replace(/\.md$/i, "")).root };
+          cache.set(m.name, hit);
+        } catch {
+          continue;
+        }
+      }
+      const mapName = m.name.replace(/\.md$/i, "");
+      walk(hit.root, (n) => {
+        const path = pathTo(hit!.root, n.id).map((x) => x.text.split("\n")[0]);
+        items.push({
+          label: n.text.split("\n")[0] || "Untitled",
+          hint: mapName + (path.length > 1 ? " › " + path.slice(1, -1).join(" › ") : ""),
+          keys: "",
+          extra: n.note,
+          weak: true,
+          run: async () => {
+            await this.open(m.name);
+            const ip = path.length ? indexPathIn(hit!.root, n.id) : [];
+            const target = nodeAtPath(this.root, ip);
+            if (target) {
+              for (const p of pathTo(this.root, target.id).slice(0, -1)) p.collapsed = false;
+              this.sel = target.id;
+              this.render();
+              this.mapView.center(target.id);
+            }
+          },
+        });
+      });
+    }
+    $("toast").hidden = true;
+    this.palette.open(items, `Search ${this.maps.length} maps…`, () => this.focusSink());
+  }
+
+  private async newFolder() {
+    const name = await this.palette.prompt("New folder name (use / for a sub-folder)");
+    if (!name) return this.focusSink();
+    const rel = name.replace(/[\\:*?"<>|]/g, "").replace(/^\/+|\/+$/g, "");
+    if (!rel) return;
+    try {
+      await this.store.makeFolder(rel);
+      await this.refreshList();
+      this.renderSidebar();
+      this.toast("Folder created: " + rel);
+    } catch (err) {
+      this.toast("Could not create folder: " + String(err));
+    }
+    this.focusSink();
+  }
+
+  private async moveToFolder() {
+    if (!this.fileName) return;
+    await this.flush();
+    const cur = dirOf(this.fileName);
+    const go = async (dir: string) => {
+      const target = this.uniqueName((dir ? dir + "/" : "") + baseOf(this.fileName!), this.fileName!);
+      try {
+        await this.store.rename(this.fileName!, target);
+        this.fileName = target;
+        localStorage.setItem("lm:last", target);
+        await this.refreshList();
+        this.renderSidebar();
+        this.toast("Moved to " + (dir || "top level"));
+      } catch (err) {
+        this.toast("Move failed: " + String(err));
+      }
+    };
+    const items: PaletteItem[] = ["", ...this.folders]
+      .filter((f) => f !== cur)
+      .map((f) => ({ label: f || "(top level)", hint: "", keys: "", icon: "📁", run: () => go(f) }));
+    items.push({
+      label: "New folder…",
+      hint: "",
+      keys: "",
+      icon: "＋",
+      run: async () => {
+        const name = await this.palette.prompt("Folder name");
+        if (name) {
+          await this.store.makeFolder(name);
+          await go(name.replace(/^\/+|\/+$/g, ""));
+        }
+      },
+    });
+    this.palette.open(items, "Move map to…", () => this.focusSink());
+  }
+
+  /** AI Assist on the selected topic. */
+  private async runAI(action: AIAction): Promise<void> {
+    const n = this.selNode;
+    if (!n) return;
+    if (this.editing) this.stopEdit();
+    const s = loadAISettings();
+    if (!s) {
+      this.toast("Set up AI first");
+      await openAISettings(this.store, (m) => this.toast(m));
+      if (!loadAISettings()) return this.focusSink();
+      return this.runAI(action);
+    }
+    const spec = AI_ACTIONS.find((a) => a.id === action)!;
+    if (action === "compare" && n.children.length < 2) return this.toast("Add at least two options as sub-topics first");
+    const { system, user } = buildPrompt(action, this.root, n, s.language);
+    const el = this.mapView.elementFor(n.id);
+    el?.classList.add("busy");
+    this.toast("AI is thinking…");
+    try {
+      const out = (await complete(this.store, s, system, user)).trim();
+      if (!out) throw new Error("Empty answer");
+      if (spec.result === "children") {
+        const nodes = parsePastedText(cleanList(out));
+        if (!nodes.length) throw new Error("Could not read the answer as a list");
+        this.mutate(() => {
+          const live = this.node(n.id);
+          if (!live) return null;
+          live.collapsed = false;
+          live.children.push(...nodes.map(reId));
+          return live.id;
+        });
+        this.toast(`AI added ${nodes.length} topic${nodes.length > 1 ? "s" : ""}`);
+      } else {
+        const heading = action === "summarize" ? "**Summary**" : "**Comparison**";
+        this.mutate(() => {
+          const live = this.node(n.id);
+          if (live) live.note = (live.note.trim() ? live.note.trimEnd() + "\n\n" : "") + heading + "\n\n" + out;
+        });
+        this.notesOpen = true;
+        this.notesEditing = false;
+        this.render();
+        this.toast("AI wrote to the notes");
+      }
+    } catch (err) {
+      this.toast("AI failed: " + String((err as Error).message ?? err));
+    } finally {
+      this.mapView.elementFor(n.id)?.classList.remove("busy");
+    }
+  }
+
+
+
+
 
   private undo() {
     const s = this.history.undo(this.root, this.sel);
@@ -1081,22 +1625,212 @@ export class App {
   }
 
   // ---------------------------------------------------------------- chrome
+  togglePanel(open = !this.notesOpen) {
+    this.notesOpen = open;
+    this.savePrefs();
+    this.render();
+    this.focusSink();
+  }
+
+  /** Build the style panel controls once; renderInspector() updates their state. */
+  private wireInspector() {
+    const colors = $("in-colors");
+    const sw = (label: string, css: string, token: string | null, cls = "") =>
+      `<button class="sw ${cls}" data-color="${token ?? ""}" title="${label}" style="--sw:${css}"></button>`;
+    colors.innerHTML =
+      sw("Default", "var(--node-fill)", null, "default") +
+      COLOR_NAMES.map((n, i) => sw(n[0].toUpperCase() + n.slice(1) + (i < 9 ? ` (⌥${i + 1})` : ""), cssColor(n), n)).join("") +
+      sw("Custom colour…", "transparent", "custom", "custom");
+    colors.addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button.sw");
+      if (!b) return;
+      const t = b.dataset.color!;
+      if (t === "custom") this.customColor();
+      else this.setColor(t || undefined);
+    });
+    const shapes = $("in-shapes");
+    shapes.innerHTML = SHAPE_LIST.map((s) => `<button class="shape-btn" data-shape="${s.id}" title="${s.name}"><svg viewBox="0 0 24 18">${shapeIcon(s.id)}</svg></button>`).join("");
+    shapes.addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button.shape-btn");
+      if (!b) return;
+      const n = this.selNode;
+      const s = b.dataset.shape as Shape;
+      this.setShape(n?.shape === s ? undefined : s); // click the active shape again = automatic
+    });
+    ($("in-children") as HTMLInputElement).onchange = (e) => (this.styleChildren = (e.target as HTMLInputElement).checked);
+    $("in-icon").onclick = () => this.openIconPicker();
+    $("in-theme").onclick = () => this.openThemePicker();
+    const lay = $("in-layouts");
+    const li: Record<string, string> = { mindmap: "layoutMind", right: "layoutRight", left: "layoutLeft", down: "layoutDown" };
+    lay.innerHTML = LAYOUTS.map((l) => `<button data-layout="${l.id}" title="${l.name}">${icon(li[l.id], 20)}</button>`).join("");
+    lay.addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-layout]");
+      if (b) this.setLayout(b.dataset.layout as LayoutKind);
+    });
+    $("in-mapstyle").addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-style]");
+      if (b) this.setMapStyle(b.dataset.style as "filled" | "outline");
+    });
+    $("in-actions").addEventListener("click", (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-act]");
+      if (!b) return;
+      const act = b.dataset.act!;
+      const n = this.selNode;
+      if (!n) return;
+      if (act === "done") this.mutate(() => void (n.task = n.task === "done" ? undefined : "done"));
+      if (act === "checkbox") this.mutate(() => void (n.task = n.task ? undefined : "todo"));
+      if (act === "notes") this.setNotesEditing(true);
+      if (act === "tasks") {
+        this.history.push(this.root, this.sel);
+        this.setNote(n.id, (n.note.trim() ? n.note.trimEnd() + "\n" : "") + "- [ ] ");
+        this.mapView.updateNode(n.id);
+        this.setNotesEditing(true);
+      }
+      if (act === "attach") void this.attach();
+      if (act === "link") this.linkTo();
+      if (act === "web") void this.addWebLink();
+      if (act === "callout") void this.editCallout();
+      if (act === "ai") this.runAI("expand");
+    });
+  }
+
+  /** Update the style panel for the current selection. */
+  renderInspector() {
+    const n = this.selNode;
+    const panel = $("notes");
+    panel.classList.toggle("no-sel", !n);
+    if (!n) return;
+    const l = find(this.root, n.id);
+    const depth = l ? l.depth - (this.focusId ? find(this.root, this.focusId)!.depth : 0) : 0;
+    $("in-color-name").textContent = n.color ? (n.color.startsWith("#") ? n.color : n.color[0].toUpperCase() + n.color.slice(1)) : "Default";
+    $("in-colors").querySelectorAll<HTMLButtonElement>("button.sw").forEach((b) => {
+      const t = b.dataset.color!;
+      b.classList.toggle("on", t === "custom" ? !!n.color?.startsWith("#") : (t || undefined) === n.color);
+      if (t === "custom" && n.color?.startsWith("#")) b.style.setProperty("--sw", n.color);
+    });
+    const shape = this.mapView.shapeOf(n, depth);
+    $("in-shape-name").textContent = (SHAPE_LIST.find((s) => s.id === shape)?.name ?? "") + (n.shape ? "" : " · auto");
+    $("in-shapes").querySelectorAll<HTMLButtonElement>("button.shape-btn").forEach((b) => b.classList.toggle("on", b.dataset.shape === shape));
+    ($("in-children") as HTMLInputElement).checked = this.styleChildren;
+    const lead = n.text.match(/^(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)/u);
+    $("in-icon").innerHTML = lead ? `<span class="emoji">${lead[1]}</span><span>Change icon</span><kbd>${prettyChord("Mod+I")}</kbd>` : `${icon("smile")}<span>Add icon</span><kbd>${prettyChord("Mod+I")}</kbd>`;
+    const act = (id: string, ic: string, label: string, keys = "") =>
+      `<button class="in-act" data-act="${id}">${icon(ic)}<span>${label}</span>${keys ? `<kbd>${prettyChord(keys)}</kbd>` : ""}</button>`;
+    const ts = n.note.match(/^\s*[-*+]\s+\[[ xX]\]/m);
+    $("in-actions").innerHTML =
+      (n.task
+        ? act("done", n.task === "done" ? "check" : "circle", n.task === "done" ? "Mark not done" : "Mark done", "Mod+Enter") + act("checkbox", "x", "Remove checkbox")
+        : act("checkbox", "circle", "Add checkbox", "Mod+Enter")) +
+      act("notes", "note", n.note.trim() ? "Edit notes" : "Add notes", "Mod+E") +
+      act("tasks", "tasks", ts ? "Add task" : "Add tasks") +
+      act("attach", "paperclip", "Attach file", "Mod+Shift+A") +
+      act("link", "link", "Link to topic…", "Mod+Shift+L") +
+      act("web", "globe", "Add web link…") +
+      act("callout", "callout", n.callout ? "Edit callout" : "Add callout") +
+      act("ai", "sparkles", "AI: expand topic", "Mod+Shift+I");
+    $("in-layout-name").textContent = LAYOUTS.find((x) => x.id === this.layout)?.name ?? "";
+    $("in-layouts").querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.layout === this.layout));
+    $("in-mapstyle").querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.style === this.mapStyle));
+    const th = THEMES.find((t) => t.id === this.theme);
+    $("in-theme").innerHTML = `<span class="sw-mini" style="background:${th ? th.rootBg : "linear-gradient(135deg,#fff 50%,#1f2937 50%)"}"></span><span>${th ? th.name : "System (light/dark)"}</span><kbd>${prettyChord("Mod+Shift+T")}</kbd>`;
+  }
+
+  private async addWebLink() {
+    const n = this.selNode;
+    if (!n) return;
+    const url = await this.palette.prompt("Web address (https://…)");
+    if (!url) return this.focusSink();
+    const href = /^[a-z]+:/i.test(url) ? url : "https://" + url;
+    const title = (await this.palette.prompt("Link text (optional)", "")) || href.replace(/^https?:\/\//, "");
+    this.history.push(this.root, this.sel);
+    this.setNote(n.id, (n.note.trim() ? n.note.trimEnd() + "\n\n" : "") + `[🔗 ${title}](${href})`);
+    this.notesEditing = false;
+    this.render();
+    this.focusSink();
+  }
+
+  private async editCallout() {
+    const n = this.selNode;
+    if (!n) return;
+    const v = await this.palette.prompt("Callout text (empty to remove)", n.callout ?? "");
+    if (v === null) return this.focusSink();
+    this.mutate(() => {
+      if (v.trim()) n.callout = v.trim();
+      else delete n.callout;
+    });
+    this.focusSink();
+  }
+
   private wireChrome() {
     $("sb-folder").onclick = () => void (this.store.kind === "desktop" ? this.chooseFolder() : this.toast("The desktop app saves to a folder of .md files."));
+    // Fill icon placeholders.
+    document.querySelectorAll<HTMLElement>("[data-icon]").forEach((el) => {
+      el.insertAdjacentHTML("afterbegin", icon(el.dataset.icon!));
+    });
     $("sb-new").onclick = () => void this.newMap();
+    $("sb-new-menu").onclick = (e) =>
+      showMenu(e.currentTarget as HTMLElement, [
+        { label: "New map", keys: prettyChord("Mod+N"), icon: icon("map"), run: () => this.newMap() },
+        { label: "Today's daily note", keys: prettyChord("Mod+Shift+D"), icon: icon("note"), run: () => this.openDaily() },
+        { label: "New folder…", icon: icon("folder"), run: () => this.newFolder() },
+        { label: "Import XMind, FreeMind, OPML, Markdown…", keys: prettyChord("Mod+Shift+O"), icon: icon("export"), run: () => this.importFile(), sep: true },
+      ], () => this.focusSink());
+    $("sb-search").onclick = () => void this.searchAllMaps();
+    $("sb-collapse").onclick = () => this.commands.find((c) => c.id === "sidebar")!.run();
+    $("sb-settings").onclick = (e) =>
+      showMenu(e.currentTarget as HTMLElement, [
+        { label: "Theme…", keys: prettyChord("Mod+Shift+T"), icon: icon("palette"), run: () => this.openThemePicker() },
+        { label: "AI Assist settings…", icon: icon("sparkles"), run: () => openAISettings(this.store, (m) => this.toast(m)).then(() => this.focusSink()) },
+        { label: "Choose maps folder…", icon: icon("folder"), run: () => this.chooseFolder() },
+        { label: "Keyboard shortcuts", keys: "?", icon: icon("help"), run: () => this.showHelp(), sep: true },
+      ], () => this.focusSink());
+    $("map-title").onclick = () => this.openSwitcher();
+    $("tb-outline").onclick = () => this.setView(this.view === "outline" ? "map" : "outline");
+    $("tb-search").onclick = () => this.openSearch();
+    $("tb-present").onclick = () => void this.presenter.start();
+    $("tb-panel").onclick = () => this.togglePanel();
+    $("tb-export").onclick = (e) =>
+      showMenu(e.currentTarget as HTMLElement, [
+        { label: "PNG image", keys: prettyChord("Mod+Shift+E"), run: () => this.exportAs("png") },
+        { label: "PDF", run: () => this.exportAs("pdf") },
+        { label: "SVG image", run: () => this.exportAs("svg") },
+        { label: "Markdown (headings)", run: () => this.exportAs("md"), sep: true },
+        { label: "Markdown (nested list)", run: () => this.exportAs("md-list") },
+        { label: "Web page (HTML)", run: () => this.exportAs("html") },
+        { label: "OPML", run: () => this.exportAs("opml"), sep: true },
+        { label: "JSON", run: () => this.exportAs("json") },
+        { label: "Plain text", run: () => this.exportAs("txt") },
+      ], () => this.focusSink(), "right");
+    $("help-fab").onclick = () => this.showHelp();
+    $("zb-in").onclick = () => this.mapView.zoomBy(1.2);
+    $("zb-out").onclick = () => this.mapView.zoomBy(1 / 1.2);
+    $("zb-pct").onclick = () => this.mapView.zoomBy(1 / this.mapView.cam.s);
+    $("zb-fit").onclick = () => this.mapView.fit();
+    $("zb-center").onclick = () => this.sel && this.mapView.center(this.sel);
+    $("zb-undo").onclick = () => this.undo();
+    $("zb-redo").onclick = () => this.redo();
+    // Buttons never keep keyboard focus: the map keeps it.
+    document.querySelectorAll<HTMLButtonElement>("#topbar button, #zoombar button, #notes .in-sec button, #help-fab, #sb-collapse, .sb-new button").forEach((b) =>
+      b.addEventListener("mouseup", () => setTimeout(() => {
+        if (!document.querySelector(".menu, .modal") && !this.palette.isOpen() && document.activeElement !== $("notes-text")) this.focusSink();
+      }, 0)),
+    );
+    this.wireInspector();
     $("sb-help").onclick = () => this.showHelp();
     $("palette-btn").onclick = () => this.openCommands();
     ($("sb-filter") as HTMLInputElement).oninput = () => this.renderSidebar();
     document.querySelectorAll<HTMLButtonElement>("#view-seg button").forEach((b) => (b.onclick = () => this.setView(b.dataset.view as View)));
-    $("notes-close").onclick = () => {
-      this.notesOpen = false;
-      this.savePrefs();
-      this.render();
-      this.focusSink();
-    };
+    $("notes-close").onclick = () => this.togglePanel(false);
+    $("notes-mode").onclick = () => this.setNotesEditing(!this.notesEditing);
+    $("notes-attach").onclick = () => void this.attach();
+    // Clicking the rendered notes (not a link or checkbox) switches to editing.
+    $("notes-preview").addEventListener("dblclick", () => this.setNotesEditing(true));
     const ta = $("notes-text") as HTMLTextAreaElement;
     let pushed = false;
-    ta.addEventListener("focus", () => (pushed = false));
+    ta.addEventListener("focus", () => {
+      pushed = false;
+      this.notesEditing = true;
+    });
     ta.addEventListener("input", () => {
       const id = ta.dataset.id;
       if (!id) return;
@@ -1115,6 +1849,25 @@ export class App {
 }
 
 // ---------------------------------------------------------------- helpers
+
+function indexPathIn(root: MapNode, id: string): number[] {
+  return indexPath(root, id);
+}
+
+/** Layout stored in front matter as "ramify-layout: down". */
+function layoutFrom(frontmatter: string): LayoutKind | null {
+  const m = frontmatter.match(/^ramify-layout:\s*(\w+)\s*$/m);
+  return m && LAYOUTS.some((l) => l.id === m[1]) ? (m[1] as LayoutKind) : null;
+}
+
+/** Set a key in YAML front matter (creating it if needed). */
+function setFrontmatter(fm: string, key: string, value: string): string {
+  const line = `${key}: ${value}`;
+  if (!fm) return `---\n${line}\n---\n`;
+  const re = new RegExp(`^${key}:.*$`, "m");
+  if (re.test(fm)) return fm.replace(re, line);
+  return fm.replace(/\n---\s*\n?$/, `\n${line}\n---\n`);
+}
 
 function indexPath(root: MapNode, id: string): number[] {
   const p = pathTo(root, id);
@@ -1147,27 +1900,40 @@ function relTime(ms: number) {
 
 function demoMap(): MapNode {
   return parseMarkdown(
-    `# Welcome to Ramify
-> Type to rename a topic. Press ? for every shortcut.
+    `# Welcome to Ramify ^welcome
+> Type to rename a topic. Press ? for every shortcut, ⌘K for every command.
 
 - Make topics
   - Tab → child topic
   - Enter → next topic
   - Just start typing to replace text
-- While typing
+- While typing <!--shape:pill-->
   - Enter → next topic
   - Tab / Shift+Tab → indent / outdent
   - Enter on an empty topic → step out
   - Esc → stop typing
+- 🎨 Style it <!--color:purple-->
+  - ⌥1–⌥9 colour, ⌘⇧C any colour
+  - ⌘⇧S shape, ⌘I icon
+  - ⌘⇧T theme (16 themes), ⌘L layout
 - Move around
   - Arrow keys
-  - ⌘F find, ⌘] focus a branch
-- [ ] Try ⌘K for every command
+  - ⌘F find, ⌘⇧F search all maps
+  - ⌘] focus a branch, ⌘⇧↩ present
+- [ ] Try the notes on this topic ^try
+  > ⌘E opens notes. They are **Markdown**:
+  >
+  > - [x] checklists
+  > - [ ] drop a file on a topic to attach it
+  > - [ ] ⌘⇧L links two topics
+- 🤖 AI Assist <!--link:try-->
+  - ⌘⇧I expands a topic
+  - ⌘K → "AI: settings" to connect Claude, OpenAI or a local model
 - Your files
   > Every map is a plain Markdown file.
   > Open it in Obsidian, edit it, and the map updates.
   - ⌘2 outline view
-  - ⌘E notes on a topic
+  - ⌘⇧D daily note
 `,
   ).root;
 }

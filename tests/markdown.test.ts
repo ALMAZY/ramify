@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseMarkdown, serializeMarkdown, parsePastedText, branchToMarkdown } from "../src/markdown";
+import { parseMarkdown, serializeMarkdown, parsePastedText, branchToMarkdown, headingsMarkdown } from "../src/markdown";
 import { MapNode, indent, outdent, addSibling, remove, moveTo, find } from "../src/model";
 
 const strip = (n: MapNode): any => ({
@@ -119,5 +119,65 @@ describe("colours", () => {
     expect(root.children[1].color).toBeUndefined();
     expect(root.children[1].text).toBe("D");
     expect(serializeMarkdown(root)).toBe(md.replace(" <!--color:javascript-->", ""));
+  });
+});
+
+describe("headings export", () => {
+  it("writes each level as a heading and bullets below h6", () => {
+    const src = "# Course\n> intro\n\n- Week 1\n  > overview\n  - [ ] Sets\n    - L3\n      - L4\n        - L5\n          - L6 deep\n            - L7\n- Week 2\n";
+    const { root } = parseMarkdown(src);
+    const md = headingsMarkdown(root);
+    expect(md).toBe(
+      "# Course\n\nintro\n\n## Week 1\n\noverview\n\n### [ ] Sets\n\n#### L3\n\n##### L4\n\n###### L5\n\n- L6 deep\n  - L7\n\n## Week 2\n",
+    );
+    // and it reads back as the same tree
+    expect(strip(parseMarkdown(md).root)).toEqual(strip(root));
+  });
+});
+
+describe("styles and links", () => {
+  it("round-trips shape, links and anchors", () => {
+    const md = "# Map ^root1\n\n- A <!--shape:pill--> <!--link:b2c3d4--> <!--link:root1-->\n- B <!--collapsed--> <!--color:red--> ^b2c3d4\n  - C\n";
+    const { root } = parseMarkdown(md);
+    expect(root.anchor).toBe("root1");
+    expect(root.children[0]).toMatchObject({ text: "A", shape: "pill", links: ["b2c3d4", "root1"] });
+    expect(root.children[1]).toMatchObject({ text: "B", anchor: "b2c3d4", color: "red", collapsed: true });
+    expect(serializeMarkdown(root)).toBe(md);
+  });
+  it("keeps a caret in normal text", () => {
+    const { root } = parseMarkdown("# M\n\n- x ^ y\n- 2^10\n");
+    expect(root.children.map((c) => [c.text, c.anchor])).toEqual([["x ^ y", undefined], ["2^10", undefined]]);
+  });
+});
+
+describe("anchor position", () => {
+  it("accepts a block id before trailing markers", () => {
+    const { root } = parseMarkdown("# M\n\n- Block ^b1 <!--link:t1--> <!--color:red-->\n- t ^t1\n");
+    expect(root.children[0]).toMatchObject({ text: "Block", anchor: "b1", links: ["t1"], color: "red" });
+  });
+});
+
+import { History, addSibling as addSib, remove as rm, makeNode as mk } from "../src/model";
+describe("undo after an empty topic is dropped", () => {
+  it("does not bring the empty topic back", () => {
+    const root = mk("R", [mk("a")]);
+    const h = new History();
+    h.push(root, null); // before creating the topic
+    const id = addSib(root, root.children[0].id)!;
+    h.push(root, id); // edit session starts on the empty topic
+    rm(root, id);
+    h.forgetEmptyEdit(root, id);
+    expect(h.undo(root, null)).toBeNull();
+    expect(root.children.length).toBe(1);
+  });
+  it("keeps undo when the text of an existing topic was erased", () => {
+    const root = mk("R", [mk("a"), mk("b")]);
+    const h = new History();
+    const id = root.children[1].id;
+    h.push(root, id); // edit starts on "b"
+    rm(root, id); // user erased the text, topic dropped
+    h.forgetEmptyEdit(root, id);
+    const s = h.undo(root, null)!;
+    expect(JSON.parse(s.root).children.map((c: any) => c.text)).toEqual(["a", "b"]);
   });
 });

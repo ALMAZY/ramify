@@ -42,7 +42,7 @@ export class OutlineView {
     this.rows.clear();
     const top = this.app.top;
     const depth = new Map<string, number>();
-    const color = resolveColors(top);
+    const color = resolveColors(this.app.root);
     const rec = (n: MapNode, d: number) => {
       depth.set(n.id, d);
       if (!n.collapsed) n.children.forEach((k) => rec(k, d + 1));
