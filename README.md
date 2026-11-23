@@ -1,8 +1,8 @@
 # Ramify
 
-**A keyboard-first mind map for fast notes.** Use it for lectures, meetings, research and planning. You can build a whole map without touching the mouse, and every map is a plain Markdown file in a folder you choose. Free and open source.
+**A keyboard-first mind map for notes and plans.** Take lecture and meeting notes as fast as you type, then turn a map into a project plan: tasks with dates, priorities and owners, and a Gantt chart that stays in sync with the map. Every map is a plain Markdown file in a folder you choose. Free and open source.
 
-![Ramify](docs/screenshot.png)
+![A project plan in Ramify: tasks with progress, dates and owners on the map, task details in the side panel](docs/screenshots/hero.png)
 
 *ramify* (v.): to branch out.
 
@@ -29,6 +29,48 @@ brew install --cask ramify
 > **First launch.** The builds are not signed with a paid certificate yet, so your system may warn you once.
 > - **macOS** (if you used the `.dmg`): open **System Settings → Privacy & Security** and click **Open Anyway**. You can also run `xattr -dr com.apple.quarantine /Applications/Ramify.app`. Homebrew installs skip this step.
 > - **Windows** SmartScreen: click **More info → Run anyway**.
+
+## What it can do
+
+### Plan a project on the map
+
+Select a topic and press `⌘⇧K` to give it task details: progress, priority (P1–P5), start and due date, duration, an assignee and the tasks it waits for. The topic shows them as a badge, a progress bar and dates. Group work with a **boundary** (`⌘⇧B`), sum up topics with a **brace** (`⌘⇧]`, Shift-click to pick several), and tag topics with **labels** (`⌘⇧;`). See the screenshot at the top.
+
+### See it as a Gantt chart
+
+![Gantt view: bars with progress and dependency arrows](docs/screenshots/gantt.png)
+
+Press `⌘3` (or the chart button in the toolbar). Drag a bar to move it, drag its ends to change the dates, and drag the knob under it to set progress. Tasks that wait for it move along. To chain tasks, Shift-click them in order and press **Dependencies**. Day, week and month zoom. Export as PNG, JPEG, PDF, Excel (CSV) or Calendar (.ics), or print.
+
+### Take notes fast
+
+![Lecture map with the notes of one topic open on the right](docs/screenshots/notes.png)
+
+Type a topic, `Tab` for a child, `Enter` for the next one. `⌘E` opens the topic's notes in the side panel: Markdown with checklists, tables, links and attachments. In notes, Enter continues a list (`- [ ]` tasks, bullets, numbers).
+
+### Edit it as an outline
+
+![The same map as an indented outline](docs/screenshots/outline.png)
+
+`⌘2` shows the same map as a list. It's the fastest way to type during a lecture. `⌘1` goes back to the map.
+
+### Pick a layout
+
+![Timeline, org chart and brace map layouts](docs/screenshots/layouts.png)
+
+Mind map, tree right, tree left, org chart, timeline and brace map (`⌘L`, or the style panel), with curved, elbow or straight lines. Each map remembers its own layout.
+
+### Do everything from the keyboard
+
+![Command palette searching for task commands](docs/screenshots/palette.png)
+
+`⌘K` finds any command. `?` lists every shortcut.
+
+### 16 themes
+
+![Dark theme with the style panel open](docs/screenshots/dark.png)
+
+Light, dark and in between, with a live preview (`⌘⇧T`).
 
 ## Features
 

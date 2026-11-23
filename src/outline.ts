@@ -72,7 +72,7 @@ export class OutlineView {
       if (n.note.trim()) {
         const note = document.createElement("div");
         note.className = "o-note";
-        note.textContent = n.note.split("\n").filter(Boolean).slice(0, 2).join(" · ");
+        note.textContent = notePreview(n.note);
         row.append(note);
       }
       list.append(row);
@@ -178,4 +178,24 @@ function setCaret(el: HTMLElement, offset: number) {
   const s = window.getSelection()!;
   s.removeAllRanges();
   s.addRange(r);
+}
+
+/** First lines of a note as plain text (Markdown marks removed). */
+function notePreview(md: string): string {
+  return md
+    .split("\n")
+    .map((l) =>
+      l
+        .replace(/^\s*\|?[-:| ]+\|?\s*$/, "") // table rule
+        .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/, (m) => (/x/i.test(m) ? "☑ " : "☐ "))
+        .replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "")
+        .replace(/^#+\s+/, "")
+        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/(\*\*|__|\*|_|`|~~)/g, "")
+        .replace(/\|/g, " ")
+        .trim(),
+    )
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" · ");
 }

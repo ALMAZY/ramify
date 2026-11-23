@@ -3,6 +3,13 @@
 All notable changes to Ramify. The section for each version is shown in the
 release notes and in the in-app update banner.
 
+## [0.3.1]
+
+### Fixed
+- Graphite theme: topic colours now match their names (orange was shown blue).
+- Outline view: note previews show plain text instead of Markdown marks.
+- Release builds stay hidden until every platform is ready, so "Check for updates" never fails half-way through a release.
+
 ## [0.3.0] — 2026-11-23
 
 ### New
