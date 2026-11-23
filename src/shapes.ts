@@ -35,18 +35,28 @@ function roundRect(w: number, h: number, r: number): string {
   return `M${f(r)},0 H${f(w - r)} A${f(r)},${f(r)} 0 0 1 ${f(w)},${f(r)} V${f(h - r)} A${f(r)},${f(r)} 0 0 1 ${f(w - r)},${f(h)} H${f(r)} A${f(r)},${f(r)} 0 0 1 0,${f(h - r)} V${f(r)} A${f(r)},${f(r)} 0 0 1 ${f(r)},0 Z`;
 }
 
-/** Bumpy outline: a bulge along every stretch of every side. */
+/** Bumpy outline: a bulge along every stretch of every side. The base
+ *  rectangle is inset so the bumps end exactly at the box edge (nothing is
+ *  drawn outside the topic, so nothing gets clipped). */
 function cloud(w: number, h: number): string {
-  const b = 7;
-  const nx = Math.max(2, Math.round(w / 26)),
-    ny = Math.max(1, Math.round(h / 22));
-  const sx = w / nx,
-    sy = h / ny;
-  let d = `M0,0`;
-  for (let i = 0; i < nx; i++) d += ` Q${f(sx * i + sx / 2)},${-b} ${f(sx * (i + 1))},0`;
-  for (let i = 0; i < ny; i++) d += ` Q${f(w + b)},${f(sy * i + sy / 2)} ${f(w)},${f(sy * (i + 1))}`;
-  for (let i = nx - 1; i >= 0; i--) d += ` Q${f(sx * i + sx / 2)},${f(h + b)} ${f(sx * i)},${f(h)}`;
-  for (let i = ny - 1; i >= 0; i--) d += ` Q${-b},${f(sy * i + sy / 2)} 0,${f(sy * i)}`;
+  const b = Math.min(6, h * 0.2, w * 0.2);
+  const L = b,
+    T = b,
+    R = w - b,
+    B = h - b;
+  const iw = R - L,
+    ih = B - T;
+  const nx = Math.max(2, Math.round(iw / 24)),
+    ny = Math.max(1, Math.round(ih / 20));
+  const sx = iw / nx,
+    sy = ih / ny;
+  // A quadratic curve reaches half-way to its control point, so a control
+  // point 2b outside the inset edge puts the top of each bump on the box edge.
+  let d = `M${f(L)},${f(T)}`;
+  for (let i = 0; i < nx; i++) d += ` Q${f(L + sx * i + sx / 2)},${f(T - 2 * b)} ${f(L + sx * (i + 1))},${f(T)}`;
+  for (let i = 0; i < ny; i++) d += ` Q${f(R + 2 * b)},${f(T + sy * i + sy / 2)} ${f(R)},${f(T + sy * (i + 1))}`;
+  for (let i = nx - 1; i >= 0; i--) d += ` Q${f(L + sx * i + sx / 2)},${f(B + 2 * b)} ${f(L + sx * i)},${f(B)}`;
+  for (let i = ny - 1; i >= 0; i--) d += ` Q${f(L - 2 * b)},${f(T + sy * i + sy / 2)} ${f(L)},${f(T + sy * i)}`;
   return d + " Z";
 }
 
@@ -104,6 +114,10 @@ export function shapePath(shape: ShapeId, w: number, h: number, root = false): s
 /** Small preview path for the shape picker (24 × 16 box). */
 export function shapeIcon(shape: ShapeId): string {
   if (shape === "plain") return `<text x="12" y="12.5" text-anchor="middle" font-size="10" font-weight="600" fill="currentColor" stroke="none">Aa</text>`;
+  if (shape === "cloud") {
+    // Drawn at 4× and scaled down so the icon gets several small bumps, like a real topic.
+    return `<path d="${shapePath("cloud", 88, 56)}" transform="translate(1,1) scale(0.25)" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.4" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>`;
+  }
   const d = shapePath(shape, 22, shape === "bubble" ? 16 : 14);
   const fill = STROKE_ONLY.has(shape) ? "none" : "currentColor";
   return `<path d="${d}" transform="translate(1,1)" fill="${fill}" fill-opacity="${shape === "frame" || shape === "line" ? 0 : 0.18}" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>`;

@@ -47,6 +47,8 @@ export interface Store {
   attachPaths(paths: string[]): Promise<string[]>;
   readBytes(rel: string): Promise<Uint8Array>;
   openFile(rel: string): Promise<void>;
+  /** True when files live on disk and can be shown in Finder / Explorer. */
+  canReveal(): boolean;
   exportFile(defaultName: string, data: string | Uint8Array, filter: FileFilter): Promise<string | null>;
   importFile(filters: FileFilter[]): Promise<ImportedFile | null>;
   http(url: string, method: string, headers: [string, string][], body?: string): Promise<HttpResult>;
@@ -138,6 +140,9 @@ class DesktopStore implements Store {
   }
   openFile(rel: string) {
     return this.invoke<void>("open_path", { path: this.path(rel) });
+  }
+  canReveal() {
+    return true;
   }
   async exportFile(defaultName: string, data: string | Uint8Array, filter: FileFilter) {
     const { save } = await import("@tauri-apps/plugin-dialog");
@@ -249,6 +254,9 @@ class BrowserStore implements Store {
     const v = localStorage.getItem(ATT_PREFIX + rel);
     if (v == null) throw new Error("Not found: " + rel);
     return fromBase64(v);
+  }
+  canReveal() {
+    return false;
   }
   async openFile(rel: string) {
     const blob = new Blob([(await this.readBytes(rel)) as BlobPart], { type: mimeFor(rel) });

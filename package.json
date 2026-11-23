@@ -1,6 +1,6 @@
 {
   "name": "ramify",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Keyboard-first mind map for fast notes. Saves plain Markdown files.",
   "scripts": {
     "dev": "vite",

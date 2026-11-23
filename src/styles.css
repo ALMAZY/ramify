@@ -305,6 +305,33 @@ button {
   color: var(--muted);
   font-size: 11px;
 }
+#sb-list {
+  user-select: none;
+  -webkit-user-select: none;
+}
+#sb-list li .sb-more {
+  display: none;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-right: -4px;
+  padding: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  align-items: center;
+  justify-content: center;
+}
+#sb-list li:hover .sb-more {
+  display: inline-flex;
+}
+#sb-list li:hover small {
+  display: none;
+}
+#sb-list li .sb-more:hover {
+  background: var(--line);
+  color: var(--text);
+}
 #sb-list li:hover {
   background: var(--kbd-bg);
 }
@@ -568,14 +595,13 @@ button {
 #map-view.panning {
   cursor: grabbing;
 }
+/* #pan moves the map; #world uses CSS zoom (not a scale transform) so text
+   and lines are drawn at full resolution at every zoom level. */
+#pan,
 #world {
   position: absolute;
   left: 0;
   top: 0;
-  transform-origin: 0 0;
-}
-#world.anim {
-  transition: transform 0.16s ease-out;
 }
 #edges {
   position: absolute;
@@ -678,7 +704,7 @@ body.style-filled .edge {
 .node.shape-banner { padding-left: 18px; padding-right: 18px; }
 .node.shape-ticket { padding-left: 16px; padding-right: 16px; }
 .node.shape-ellipse { padding: 10px 22px; }
-.node.shape-cloud { padding: 10px 16px; }
+.node.shape-cloud { padding: 14px 20px; }
 .node.shape-bubble { padding-bottom: 14px; }
 .node.shape-plain { padding-left: 4px; padding-right: 4px; }
 .node .txt {
@@ -1239,10 +1265,23 @@ body.style-filled .edge {
 .seg.wide {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--kbd-bg);
 }
 .seg.wide button {
   justify-content: center;
   height: 28px;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+}
+.seg.wide button.on {
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
 /* ---------- menus ---------- */

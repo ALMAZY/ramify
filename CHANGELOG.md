@@ -3,6 +3,17 @@
 All notable changes to Ramify. The section for each version is shown in the
 release notes and in the in-app update banner.
 
+## [0.2.1] — 2026-11-23
+
+### New
+- Delete, rename or open a map from the sidebar: right-click it or use the ⋯ button.
+
+### Fixed
+- The map stays sharp at every zoom level (it used to get blurry when zoomed in).
+- Cloud shape is no longer cut off at the edges, in the shape picker and on topics.
+- The style panel's Layout and Topic style buttons now show the current choice when you change it with a shortcut or command.
+- macOS app icon now fills the standard icon shape instead of sitting small on a grey tile (macOS 26).
+
 ## [0.2.0] — 2026-11-23
 
 ### New

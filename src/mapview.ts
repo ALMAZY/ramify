@@ -11,6 +11,8 @@ const SVGNS = "http://www.w3.org/2000/svg";
 
 export class MapView {
   private world: HTMLElement;
+  private pan: HTMLElement;
+  private camAnim = 0;
   private nodesEl: HTMLElement;
   private edgesEl: SVGSVGElement;
   private els = new Map<string, HTMLElement>();
@@ -23,6 +25,7 @@ export class MapView {
 
   constructor(private app: App, private host: HTMLElement) {
     this.world = host.querySelector("#world")!;
+    this.pan = host.querySelector("#pan")!;
     this.nodesEl = host.querySelector("#nodes")!;
     this.edgesEl = host.querySelector("#edges")!;
     this.wireMouse();
@@ -394,15 +397,43 @@ export class MapView {
 
   // ------------------------------------------------------------ camera
   private applyCam(animate = false) {
-    this.world.classList.toggle("anim", animate);
-    this.world.style.transform = `translate(${this.cam.x}px, ${this.cam.y}px) scale(${this.cam.s})`;
-    this.host.style.setProperty("--zoom", String(this.cam.s));
+    cancelAnimationFrame(this.camAnim);
+    const to = { ...this.cam };
     const pct = document.getElementById("zb-pct");
-    if (pct) pct.textContent = Math.round(this.cam.s * 100) + "%";
-    if (animate) {
-      clearTimeout((this as any)._animT);
-      (this as any)._animT = setTimeout(() => this.world.classList.remove("anim"), 200);
+    if (pct) pct.textContent = Math.round(to.s * 100) + "%";
+    this.host.style.setProperty("--zoom", String(to.s));
+    const from = this.shown;
+    if (!animate || !from || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      this.paintCam(to);
+      return;
     }
+    // Ease in log-space for zoom so zooming in and out feel the same.
+    const t0 = performance.now();
+    const D = 160;
+    const step = (now: number) => {
+      const t = Math.min(1, (now - t0) / D);
+      const e = 1 - Math.pow(1 - t, 3);
+      const s = from.s * Math.pow(to.s / from.s, e);
+      // Keep the screen point under the zoom centre fixed while easing.
+      const k = (s - from.s) / (to.s - from.s || 1);
+      this.paintCam({
+        s,
+        x: to.s === from.s ? from.x + (to.x - from.x) * e : from.x + (to.x - from.x) * k,
+        y: to.s === from.s ? from.y + (to.y - from.y) * e : from.y + (to.y - from.y) * k,
+      });
+      if (t < 1) this.camAnim = requestAnimationFrame(step);
+    };
+    this.camAnim = requestAnimationFrame(step);
+  }
+
+  private shown: { x: number; y: number; s: number } | null = null;
+
+  /** Pan with a transform, zoom with CSS zoom: the map is laid out and drawn
+   *  at the real zoom level, so it stays sharp instead of scaling a bitmap. */
+  private paintCam(c: { x: number; y: number; s: number }) {
+    this.shown = { ...c };
+    this.pan.style.transform = `translate(${c.x}px, ${c.y}px)`;
+    this.world.style.zoom = String(c.s);
   }
 
   fit(instant = false) {

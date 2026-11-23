@@ -176,7 +176,7 @@ export class App {
     this.frontmatter = setFrontmatter(this.frontmatter, "ramify-layout", k);
     this.markDirty();
     if (this.view !== "map") this.setView("map");
-    this.mapView.render();
+    this.render(); // also refreshes the layout buttons in the style panel
     this.mapView.fit();
   }
 
@@ -614,8 +614,21 @@ export class App {
       t.textContent = (q ? m.name : baseOf(m.name)).replace(/\.md$/i, "");
       const d = document.createElement("small");
       d.textContent = relTime(m.mtime);
-      li.append(t, d);
+      const more = document.createElement("button");
+      more.className = "sb-more";
+      more.title = "More";
+      more.innerHTML = icon("more", 15);
+      li.append(t, d, more);
       li.onclick = () => void this.open(m.name);
+      const menu = (anchor: HTMLElement) => this.mapMenu(anchor, m.name);
+      more.onclick = (e) => {
+        e.stopPropagation();
+        menu(more);
+      };
+      li.oncontextmenu = (e) => {
+        e.preventDefault();
+        menu(li);
+      };
       ul.append(li);
     };
     if (q) {
@@ -851,13 +864,35 @@ export class App {
     }
   }
 
-  async deleteMap() {
-    if (!this.fileName) return;
-    const name = this.fileName;
-    const ok = await this.palette.confirm(`Move “${name.replace(/\.md$/, "")}” to Trash?`, "Move to Trash");
+  /** Right-click / "⋯" menu for a map in the sidebar. */
+  private mapMenu(anchor: HTMLElement, name: string) {
+    const isCur = name === this.fileName;
+    showMenu(anchor, [
+      { label: "Open", icon: icon("map"), run: () => this.open(name) },
+      {
+        label: "Rename",
+        keys: isCur ? prettyChord("Mod+R") : undefined,
+        icon: icon("note"),
+        run: async () => {
+          if (!isCur) await this.open(name);
+          this.startEdit(this.root.id, "all");
+        },
+      },
+      ...(this.store.canReveal() ? [{ label: "Show folder", icon: icon("folder"), run: () => this.store.openFile(dirOf(name)) }] : []),
+      { label: "Move to Trash", icon: icon("trash"), run: () => this.deleteMap(name), sep: true },
+    ], () => this.focusSink());
+  }
+
+  async deleteMap(target?: string) {
+    const name = target ?? this.fileName;
+    if (!name) return;
+    const ok = await this.palette.confirm(`Move “${baseOf(name).replace(/\.md$/, "")}” to Trash?`, "Move to Trash");
     if (!ok) return;
-    clearTimeout(this.saveTimer);
-    this.dirty = false;
+    const isCur = name === this.fileName;
+    if (isCur) {
+      clearTimeout(this.saveTimer);
+      this.dirty = false;
+    }
     await this.saving;
     try {
       await this.store.remove(name);
@@ -865,10 +900,13 @@ export class App {
       this.toast("Delete failed: " + String(err));
       return;
     }
-    this.fileName = null;
     await this.refreshList();
-    if (this.maps.length) await this.open([...this.maps].sort((a, b) => b.mtime - a.mtime)[0].name);
-    else await this.newMap();
+    if (isCur) {
+      this.fileName = null;
+      if (this.maps.length) await this.open([...this.maps].sort((a, b) => b.mtime - a.mtime)[0].name);
+      else await this.newMap();
+    }
+    this.renderSidebar();
     this.toast("Moved to Trash");
   }
 
@@ -1701,6 +1739,12 @@ export class App {
 
   /** Update the style panel for the current selection. */
   renderInspector() {
+    // Map section: always reflects the current map, with or without a selection.
+    $("in-layout-name").textContent = LAYOUTS.find((x) => x.id === this.layout)?.name ?? "";
+    $("in-layouts").querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.layout === this.layout));
+    $("in-mapstyle").querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.style === this.mapStyle));
+    const th = THEMES.find((t) => t.id === this.theme);
+    $("in-theme").innerHTML = `<span class="sw-mini" style="background:${th ? th.rootBg : "linear-gradient(135deg,#fff 50%,#1f2937 50%)"}"></span><span>${th ? th.name : "System (light/dark)"}</span><kbd>${prettyChord("Mod+Shift+T")}</kbd>`;
     const n = this.selNode;
     const panel = $("notes");
     panel.classList.toggle("no-sel", !n);
@@ -1733,11 +1777,6 @@ export class App {
       act("web", "globe", "Add web link…") +
       act("callout", "callout", n.callout ? "Edit callout" : "Add callout") +
       act("ai", "sparkles", "AI: expand topic", "Mod+Shift+I");
-    $("in-layout-name").textContent = LAYOUTS.find((x) => x.id === this.layout)?.name ?? "";
-    $("in-layouts").querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.layout === this.layout));
-    $("in-mapstyle").querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.style === this.mapStyle));
-    const th = THEMES.find((t) => t.id === this.theme);
-    $("in-theme").innerHTML = `<span class="sw-mini" style="background:${th ? th.rootBg : "linear-gradient(135deg,#fff 50%,#1f2937 50%)"}"></span><span>${th ? th.name : "System (light/dark)"}</span><kbd>${prettyChord("Mod+Shift+T")}</kbd>`;
   }
 
   private async addWebLink() {
