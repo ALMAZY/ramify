@@ -48,13 +48,34 @@ jobs:
       - run: npm ci
       - run: npm test
 
+      # Release notes = this version's section of CHANGELOG.md (also shown in the in-app update banner).
+      - name: Release notes
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '$0 ~ "^## \\[?"v"\\]?" {f=1; next} /^## / && f {exit} f' CHANGELOG.md > notes.md || true
+          [ -s notes.md ] || echo "See the README for what's new." > notes.md
+          {
+            echo 'NOTES<<EOF_NOTES'
+            cat notes.md
+            echo
+            echo 'EOF_NOTES'
+          } >> "$GITHUB_ENV"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update files so installed apps can verify them (see scripts/setup-updater.sh).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Ramify ${{ github.ref_name }}"
+          includeUpdaterJson: true
           releaseBody: |
+            ${{ env.NOTES }}
+
+            ---
             **macOS:** `brew tap almazy/tap && brew trust almazy/tap && brew install --cask ramify`, or download the `.dmg`.
             **Windows:** download the `.msi` or `-setup.exe`.
             **Linux:** `.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE) or `.AppImage` (any distro).
@@ -62,7 +83,7 @@ jobs:
             The builds are not signed with a paid certificate yet. See the README for the one-time "Open anyway" step.
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
 
   homebrew:
     # Updates the cask in ALMAZY/homebrew-tap. Needs a TAP_TOKEN secret (see README → Maintainers).

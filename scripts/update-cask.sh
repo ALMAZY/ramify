@@ -45,6 +45,9 @@ cask "ramify" do
 
   depends_on macos: ">= :big_sur"
 
+  # Ramify updates itself from inside the app.
+  auto_updates true
+
   app "Ramify.app"
 
   # The app is ad-hoc signed, not notarized (no paid Apple Developer ID yet).

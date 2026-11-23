@@ -33,6 +33,9 @@ const P: Record<string, string> = {
   layoutLeft: '<rect x="15" y="10" width="6" height="4" rx="1"/><path d="M15 12h-3M12 6.5v11M12 6.5H9M12 17.5H9M12 12H9"/><rect x="3" y="5" width="6" height="3" rx="1"/><rect x="3" y="10.5" width="6" height="3" rx="1"/><rect x="3" y="16" width="6" height="3" rx="1"/>',
   layoutDown: '<rect x="9" y="3" width="6" height="4" rx="1"/><path d="M12 7v3M5.5 10h13M5.5 10v3M12 10v3M18.5 10v3"/><rect x="3" y="13" width="5" height="4" rx="1"/><rect x="9.5" y="13" width="5" height="4" rx="1"/><rect x="16" y="13" width="5" height="4" rx="1"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.5 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-7.8-9-7.8z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="11" cy="7" r="1"/><circle cx="15.5" cy="8" r="1"/>',
+  download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.9-3.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.9 3.9L20 16M20 20v-4h-4"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
 };
 

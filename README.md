@@ -100,6 +100,10 @@ brew install --cask ramify
 | `⌘Z` / `⌘⇧Z` | Undo / redo |
 | `⌘B` | Toggle sidebar |
 
+## Updates
+
+Ramify checks GitHub for a new version at launch and every 6 hours. When one is out, a card shows the release notes with **Update and restart**. Updates are signed; the app refuses any file that isn't. Turn automatic checks off, or check by hand, in **Settings** (bottom of the sidebar) or the command palette.
+
 ## AI Assist
 
 Run **⌘K → "AI: settings"** and pick a provider:
@@ -196,6 +200,10 @@ There's no UI framework, just TypeScript and DOM. Every action is a command in `
 3. GitHub Actions builds macOS (universal), Windows and Linux (x64 + arm64) and publishes the release.
 4. The `homebrew` job updates `ALMAZY/homebrew-tap` when the repo has a `TAP_TOKEN` secret: a fine-grained token with **Contents: read and write** on `homebrew-tap` only. Without it, run `scripts/update-cask.sh vX.Y.Z` yourself.
 
+### First-time update setup
+
+Run `scripts/setup-updater.sh` once on your Mac. It creates the signing key in `~/.tauri/ramify.key`, puts the public key in `tauri.conf.json`, and stores the private key as a GitHub secret. Back up the key and its password: without them, installed copies can't be updated. After that, each release is: add a section to `CHANGELOG.md`, bump the version, tag `vX.Y.Z`, push.
+
 ## License
 
-MIT © 2026 Aleksandrs Mazurs
+MIT © 2026 ALMAZY and Ramify contributors

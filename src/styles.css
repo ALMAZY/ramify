@@ -632,12 +632,22 @@ body.style-filled .edge {
   z-index: -1;
   pointer-events: none;
 }
-.node > svg.bg path {
+.node > svg.bg path.shape {
   fill: var(--fill);
   stroke: var(--stroke);
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+.node > svg.bg path.ring {
+  fill: none;
+  stroke: var(--sel);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  display: none;
+}
+.node.sel > svg.bg path.ring {
+  display: block;
 }
 .node > svg.bg path.stroke-only {
   fill: none;
@@ -654,7 +664,7 @@ body.style-filled .edge {
   font-weight: 700;
   max-width: 360px;
 }
-.node.root > svg.bg path {
+.node.root > svg.bg path.shape {
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.18));
 }
 .node.outlined.dn.shape-line {
@@ -688,14 +698,13 @@ body.style-filled .edge {
   cursor: text;
 }
 .node.sel {
-  outline: 2px solid var(--sel);
-  outline-offset: 3px;
+  outline: none;
 }
 .node.sel.shape-line,
 .node.sel.shape-plain {
   background: var(--sel-soft);
 }
-.node.editing > svg.bg path {
+.node.editing > svg.bg path.shape {
   filter: drop-shadow(0 3px 10px rgba(0, 0, 0, 0.22));
 }
 .node .box {
@@ -1691,6 +1700,9 @@ body.presenting #map-view {
 body.presenting .node.sel {
   outline: none;
 }
+body.presenting .node.sel > svg.bg path.ring {
+  display: none;
+}
 body.presenting .node {
   cursor: default;
 }
@@ -1732,4 +1744,88 @@ body.presenting .node {
   padding: 14px 16px;
   box-shadow: var(--shadow);
   z-index: 60;
+}
+
+/* ---------- update banner ---------- */
+.update-banner {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 24px;
+  z-index: 130;
+  width: min(380px, 92vw);
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.22);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+}
+.update-banner .ub-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.update-banner .ub-head strong {
+  font-size: 14px;
+}
+.update-banner .ub-cur {
+  color: var(--muted);
+}
+.update-banner .ub-notes summary {
+  cursor: pointer;
+  color: var(--sel);
+}
+.update-banner .ub-notes .md {
+  max-height: 180px;
+  overflow: auto;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.update-banner .ub-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.update-banner .ub-actions button {
+  padding: 6px 12px;
+  border-radius: 7px;
+  background: var(--kbd-bg);
+}
+.update-banner .ub-actions button.primary {
+  background: var(--sel);
+  color: #fff;
+}
+.update-banner .ub-actions button.link-btn {
+  background: none;
+  padding: 0;
+  color: var(--muted);
+}
+.update-banner .ub-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.update-banner .ub-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--kbd-bg);
+  overflow: hidden;
+}
+.update-banner .ub-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--sel);
+  transition: width 0.2s;
+}
+.update-banner .ub-status {
+  color: var(--muted);
+}
+.update-banner .spacer {
+  flex: 1;
 }

@@ -23,6 +23,8 @@ import { ICONS } from "./icons";
 import { SHAPE_LIST, shapeIcon } from "./shapes";
 import { icon } from "./ui-icons";
 import { showMenu } from "./menu";
+import { Updater, autoCheckEnabled, setAutoCheck, appVersion, RELEASES_URL } from "./updater";
+import { openExternal } from "./notes";
 
 export interface Command {
   id: string;
@@ -69,6 +71,7 @@ export class App {
   /** "filled": solid coloured topics (default). "outline": outlined topics, coloured lines. */
   mapStyle: "filled" | "outline" = "filled";
   presenter = new Presenter(this);
+  updater = new Updater(this);
 
   history = new History();
   maps: MapEntry[] = [];
@@ -115,6 +118,7 @@ export class App {
     // Text colours on filled topics depend on the theme: repaint when the OS switches light/dark.
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => this.theme === "system" && this.mapView.render());
     this.wireFileDrop();
+    this.updater.startAutoCheck();
     // Live sync: pick up changes made by other apps / devices (iCloud, Dropbox, Syncthing, git).
     window.setInterval(() => void this.poll(), 3000);
     await this.refreshList();
@@ -982,6 +986,7 @@ export class App {
       { id: "rename", group: "Maps", title: "Rename map", keys: ["Mod+R"], navOnly: false, run: () => this.startEdit(this.root.id, "all") },
       { id: "delete-map", group: "Maps", title: "Move map to Trash", run: () => this.deleteMap() },
       { id: "folder", group: "Maps", title: "Choose maps folder…", run: () => void this.chooseFolder() },
+      { id: "check-updates", group: "Maps", title: "Check for updates…", run: () => this.updater.check(false) },
       { id: "save", group: "Maps", title: "Save now", keys: ["Mod+S"], navOnly: false, run: () => ((this.dirty = true), this.save()) },
       { id: "import", group: "Maps", title: "Import XMind / FreeMind / OPML / Markdown / text…", keys: ["Mod+Shift+O"], navOnly: false, run: () => this.importFile() },
       // AI
@@ -1777,13 +1782,26 @@ export class App {
       ], () => this.focusSink());
     $("sb-search").onclick = () => void this.searchAllMaps();
     $("sb-collapse").onclick = () => this.commands.find((c) => c.id === "sidebar")!.run();
-    $("sb-settings").onclick = (e) =>
-      showMenu(e.currentTarget as HTMLElement, [
+    $("sb-settings").onclick = async (e) => {
+      const anchor = e.currentTarget as HTMLElement;
+      const version = await appVersion();
+      showMenu(anchor, [
         { label: "Theme…", keys: prettyChord("Mod+Shift+T"), icon: icon("palette"), run: () => this.openThemePicker() },
         { label: "AI Assist settings…", icon: icon("sparkles"), run: () => openAISettings(this.store, (m) => this.toast(m)).then(() => this.focusSink()) },
         { label: "Choose maps folder…", icon: icon("folder"), run: () => this.chooseFolder() },
+        { label: "Check for updates…", icon: icon("download"), run: () => this.updater.check(false), sep: true },
+        {
+          label: `Check automatically: ${autoCheckEnabled() ? "on" : "off"}`,
+          icon: icon("refresh"),
+          run: () => {
+            setAutoCheck(!autoCheckEnabled());
+            this.toast(`Automatic update checks ${autoCheckEnabled() ? "on" : "off"}`);
+          },
+        },
+        { label: `About Ramify ${version}`, icon: icon("info"), run: () => openExternal(RELEASES_URL) },
         { label: "Keyboard shortcuts", keys: "?", icon: icon("help"), run: () => this.showHelp(), sep: true },
       ], () => this.focusSink());
+    };
     $("map-title").onclick = () => this.openSwitcher();
     $("tb-outline").onclick = () => this.setView(this.view === "outline" ? "map" : "outline");
     $("tb-search").onclick = () => this.openSearch();

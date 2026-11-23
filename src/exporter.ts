@@ -88,7 +88,7 @@ export function exportSVG(app: App): string {
     const cs = getComputedStyle(el);
     const fg = cs.color;
     // Shape: the same path the screen draws.
-    const sp = el.querySelector<SVGPathElement>("svg.bg path");
+    const sp = el.querySelector<SVGPathElement>("svg.bg path.shape");
     const d = sp?.getAttribute("d");
     if (sp && d) {
       const ps = getComputedStyle(sp);

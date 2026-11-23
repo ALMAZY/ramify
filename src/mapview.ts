@@ -69,7 +69,7 @@ export class MapView {
     const el = document.createElement("div");
     el.className = "node";
     el.dataset.id = id;
-    el.innerHTML = `<svg class="bg" aria-hidden="true"><path/></svg><span class="box"></span><span class="txt"></span><span class="chip"></span><span class="ndot" title="Has notes"></span><span class="badge"></span><span class="fold-dot" title="Fold / unfold (⌘.)"></span><span class="callout" hidden></span>`;
+    el.innerHTML = `<svg class="bg" aria-hidden="true"><path class="ring"/><path class="shape"/></svg><span class="box"></span><span class="txt"></span><span class="chip"></span><span class="ndot" title="Has notes"></span><span class="badge"></span><span class="fold-dot" title="Fold / unfold (⌘.)"></span><span class="callout" hidden></span>`;
     return el;
   }
 
@@ -181,10 +181,20 @@ export class MapView {
       el.style.transform = `translate(${b.x}px, ${b.y}px)`;
       el.classList.toggle("left", b.side === -1);
       el.classList.toggle("stack", !!b.stack);
-      const path = el.querySelector<SVGPathElement>("svg.bg path")!;
-      const d = shapePath(el.dataset.shape as ShapeId, b.w, b.h, !b.parent);
+      const shape = el.dataset.shape as ShapeId;
+      const path = el.querySelector<SVGPathElement>("svg.bg path.shape")!;
+      const d = shapePath(shape, b.w, b.h, !b.parent);
       if (path.getAttribute("d") !== d) path.setAttribute("d", d);
-      path.classList.toggle("stroke-only", STROKE_ONLY.has(el.dataset.shape as ShapeId));
+      path.classList.toggle("stroke-only", STROKE_ONLY.has(shape));
+      // Selection ring follows the topic's own shape (a pill gets a pill ring, a diamond a diamond…).
+      const ring = el.querySelector<SVGPathElement>("svg.bg path.ring")!;
+      const G = 4; // gap between topic and ring
+      const ringShape: ShapeId = shape === "line" || shape === "plain" || shape === "frame" ? "rounded" : shape;
+      const rd = shapePath(ringShape, b.w + 2 * G, b.h + 2 * G, !b.parent);
+      if (ring.getAttribute("d") !== rd) {
+        ring.setAttribute("d", rd);
+        ring.setAttribute("transform", `translate(${-G},${-G})`);
+      }
     }
     // Edges
     const seen = new Set<string>();
