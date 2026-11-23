@@ -26,7 +26,9 @@ else SHA=$(shasum -a 256 "$WORK/app.dmg" | cut -d' ' -f1); fi
 gh repo clone "$TAP" "$WORK/tap" -- -q
 mkdir -p "$WORK/tap/Casks"
 # Asset names repeat the version; let Homebrew fill it in so `brew bump` style edits stay simple.
-URL_TEMPLATE="${URL//$VERSION/#\{version\}}"
+# Kept in a variable: macOS bash 3.2 adds a stray backslash to "#\{...\}" written inline.
+RUBY_VERSION_REF='#{version}'
+URL_TEMPLATE="${URL//$VERSION/$RUBY_VERSION_REF}"
 
 cat > "$WORK/tap/Casks/ramify.rb" <<EOF
 cask "ramify" do
