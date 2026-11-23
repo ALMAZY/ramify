@@ -81,13 +81,28 @@ jobs:
             **Linux:** `.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE) or `.AppImage` (any distro).
 
             The builds are not signed with a paid certificate yet. See the README for the one-time "Open anyway" step.
-          releaseDraft: false
+          # Stays a draft until every platform is built (see "publish"), so installed
+          # apps never see an update file that is missing their platform.
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }} --config src-tauri/tauri.release.conf.json
 
+  publish:
+    # All builds are done: make the release public. Only now do installed apps see it.
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" --draft=false --latest
+
   homebrew:
     # Updates the cask in ALMAZY/homebrew-tap. Needs a TAP_TOKEN secret (see README → Maintainers).
-    needs: build
+    needs: publish
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     env:

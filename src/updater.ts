@@ -57,7 +57,11 @@ export class Updater {
       if (silent && localStorage.getItem(SKIP_KEY) === update.version) return;
       this.show(update);
     } catch (err) {
-      if (!silent) this.app.toast("Could not check for updates: " + String((err as Error).message ?? err));
+      const msg = String((err as Error).message ?? err);
+      if (silent) return;
+      // A release whose build for this platform hasn't finished yet.
+      if (/platforms/i.test(msg)) this.app.toast("A new version is still being built for your system. Try again in a few minutes.");
+      else this.app.toast("Could not check for updates: " + msg);
     } finally {
       this.busy = false;
     }
