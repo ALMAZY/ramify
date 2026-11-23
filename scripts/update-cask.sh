@@ -45,7 +45,7 @@ cask "ramify" do
     strategy :github_latest
   end
 
-  depends_on macos: ">= :big_sur"
+  depends_on macos: :big_sur
 
   # Ramify updates itself from inside the app.
   auto_updates true
