@@ -33,6 +33,7 @@ const P: Record<string, string> = {
   layoutLeft: '<rect x="15" y="10" width="6" height="4" rx="1"/><path d="M15 12h-3M12 6.5v11M12 6.5H9M12 17.5H9M12 12H9"/><rect x="3" y="5" width="6" height="3" rx="1"/><rect x="3" y="10.5" width="6" height="3" rx="1"/><rect x="3" y="16" width="6" height="3" rx="1"/>',
   layoutDown: '<rect x="9" y="3" width="6" height="4" rx="1"/><path d="M12 7v3M5.5 10h13M5.5 10v3M12 10v3M18.5 10v3"/><rect x="3" y="13" width="5" height="4" rx="1"/><rect x="9.5" y="13" width="5" height="4" rx="1"/><rect x="16" y="13" width="5" height="4" rx="1"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.5 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.8.7-1.5 1.5-1.5H16a5 5 0 0 0 5-5c0-4.4-4-7.8-9-7.8z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="11" cy="7" r="1"/><circle cx="15.5" cy="8" r="1"/>',
+  back: '<path d="m15 6-6 6 6 6"/>',
   more: '<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
   download: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',

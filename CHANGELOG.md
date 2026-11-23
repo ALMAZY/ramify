@@ -3,6 +3,11 @@
 All notable changes to Ramify. The section for each version is shown in the
 release notes and in the in-app update banner.
 
+## [0.2.2] — 2026-11-23
+
+### New
+- ⌘E opens a topic's notes over the whole right panel. ⌘E again, Esc or ‹ goes back.
+
 ## [0.2.1] — 2026-11-23
 
 ### New

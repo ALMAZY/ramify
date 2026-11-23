@@ -66,6 +66,9 @@ export class App {
   mapLayout: LayoutKind | null = null;
   notesOpen = true;
   notesEditing = false;
+  /** Notes take the whole right panel (⌘E); the style controls are hidden. */
+  notesFull = false;
+  private panelWasClosed = false;
   sidebarOpen = true;
   theme = "system";
   /** "filled": solid coloured topics (default). "outline": outlined topics, coloured lines. */
@@ -381,6 +384,11 @@ export class App {
     const c = chord(e);
     const inNotes = document.activeElement === $("notes-text");
     const inFilter = document.activeElement === $("sb-filter");
+    if (inNotes && c === "Escape" && this.notesFull) {
+      e.preventDefault();
+      this.closeFullNotes();
+      return;
+    }
     if (inNotes && c === "Escape") {
       e.preventDefault();
       ($("notes-text") as HTMLTextAreaElement).blur();
@@ -508,6 +516,7 @@ export class App {
     $("tb-outline").classList.toggle("on", this.view === "outline");
     $("tb-panel").classList.toggle("on", this.notesOpen);
     $("notes").hidden = !this.notesOpen;
+    $("notes").classList.toggle("notes-full", this.notesFull);
     $("map-view").hidden = this.view !== "map";
     $("outline-view").hidden = this.view !== "outline";
     document.querySelectorAll<HTMLButtonElement>("#view-seg button").forEach((b) => b.classList.toggle("on", b.dataset.view === this.view));
@@ -1131,20 +1140,31 @@ export class App {
     this.mutate(() => void (n.collapsed = !n.collapsed));
   }
 
+  /** ⌘E: open the notes over the whole right panel; ⌘E again (or Esc) goes back. */
   private toggleNotes() {
-    const ta = $("notes-text") as HTMLTextAreaElement;
-    if (this.notesOpen && document.activeElement === ta) {
-      this.notesOpen = false;
-      this.savePrefs();
-      this.render();
-      this.focusSink();
-      return;
-    }
+    if (this.notesOpen && this.notesFull) return this.closeFullNotes();
+    this.openFullNotes();
+  }
+
+  openFullNotes() {
     if (this.editing) this.stopEdit();
+    this.panelWasClosed = !this.notesOpen;
     this.notesOpen = true;
-    this.savePrefs();
+    this.notesFull = true;
     this.render();
     this.setNotesEditing(true);
+  }
+
+  closeFullNotes() {
+    const ta = $("notes-text") as HTMLTextAreaElement;
+    ta.blur();
+    this.notesFull = false;
+    this.notesEditing = false;
+    if (this.panelWasClosed) this.notesOpen = false;
+    this.panelWasClosed = false;
+    this.savePrefs();
+    this.render();
+    this.focusSink();
   }
 
   private copyBranch(cut: boolean) {
@@ -1722,7 +1742,7 @@ export class App {
       if (!n) return;
       if (act === "done") this.mutate(() => void (n.task = n.task === "done" ? undefined : "done"));
       if (act === "checkbox") this.mutate(() => void (n.task = n.task ? undefined : "todo"));
-      if (act === "notes") this.setNotesEditing(true);
+      if (act === "notes") this.openFullNotes();
       if (act === "tasks") {
         this.history.push(this.root, this.sel);
         this.setNote(n.id, (n.note.trim() ? n.note.trimEnd() + "\n" : "") + "- [ ] ");
@@ -1877,7 +1897,14 @@ export class App {
     $("palette-btn").onclick = () => this.openCommands();
     ($("sb-filter") as HTMLInputElement).oninput = () => this.renderSidebar();
     document.querySelectorAll<HTMLButtonElement>("#view-seg button").forEach((b) => (b.onclick = () => this.setView(b.dataset.view as View)));
-    $("notes-close").onclick = () => this.togglePanel(false);
+    $("notes-close").onclick = () => {
+      this.notesFull = false;
+      this.togglePanel(false);
+    };
+    $("notes-back").onclick = () => {
+      this.panelWasClosed = false; // "back" returns to the style panel, it doesn't close it
+      this.closeFullNotes();
+    };
     $("notes-mode").onclick = () => this.setNotesEditing(!this.notesEditing);
     $("notes-attach").onclick = () => void this.attach();
     // Clicking the rendered notes (not a link or checkbox) switches to editing.

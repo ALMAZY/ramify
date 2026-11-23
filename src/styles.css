@@ -1032,6 +1032,42 @@ body.style-filled .edge {
   overflow: auto;
   min-height: 0;
 }
+#notes-back {
+  display: none;
+  margin-left: -8px;
+}
+/* ⌘E: notes fill the whole panel. */
+#notes.notes-full {
+  width: 380px;
+}
+#notes.notes-full #notes-back {
+  display: inline-flex;
+}
+#notes.notes-full .in-scroll {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#notes.notes-full .in-sec:not(.in-notes) {
+  display: none !important;
+}
+#notes.notes-full .in-notes {
+  flex: 1;
+  min-height: 0;
+  padding-top: 6px;
+}
+#notes.notes-full .in-notes textarea {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  font-size: 14px;
+  line-height: 1.55;
+}
+#notes.notes-full #notes-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 #notes.no-sel .in-sec:not(:last-child) {
   display: none;
 }
