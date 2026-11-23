@@ -132,7 +132,54 @@ fn trash_file(path: String) -> Result<(), String> {
     trash::delete(&path).map_err(err)
 }
 
+#[derive(Serialize)]
+struct FileEntry {
+    name: String,
+    size: u64,
+    mtime: f64,
+}
+
+/// Files (not folders) directly inside `dir`. A missing folder is an empty list.
+#[tauri::command]
+fn list_files(dir: String) -> Result<Vec<FileEntry>, String> {
+    let rd = match fs::read_dir(&dir) {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(e) => return Err(err(e)),
+    };
+    let mut out = vec![];
+    for entry in rd.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let mtime = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_millis() as f64)
+            .unwrap_or(0.0);
+        out.push(FileEntry { name: entry.file_name().to_string_lossy().to_string(), size: meta.len(), mtime });
+    }
+    Ok(out)
+}
+
+/// Deletes one backup copy. Only works inside a ".ramify/history" folder, so it
+/// can never remove a map or anything else of the user's.
+#[tauri::command]
+fn remove_backup(path: String) -> Result<(), String> {
+    let norm = path.replace('\\', "/");
+    if !norm.contains("/.ramify/history/") || norm.contains("/../") {
+        return Err("Not a backup".into());
+    }
+    match fs::remove_file(&path) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(err(e)),
+        _ => Ok(()),
+    }
+}
+
 /// Copies `from` into directory `to_dir`, never overwriting: "a.png" -> "a 2.png".
+/// The same file attached twice is reused instead of copied again.
 /// Returns the new file name.
 #[tauri::command]
 fn copy_into(from: String, to_dir: String) -> Result<String, String> {
@@ -146,17 +193,35 @@ fn copy_into(from: String, to_dir: String) -> Result<String, String> {
         .unwrap_or_default();
     let mut name = format!("{}{}", stem, ext);
     let mut i = 2;
+    let src_bytes = fs::read(src).map_err(err)?;
     while dir.join(&name).exists() {
+        if fs::read(dir.join(&name)).map(|b| b == src_bytes).unwrap_or(false) {
+            return Ok(name); // identical file already attached
+        }
         name = format!("{} {}{}", stem, i, ext);
         i += 1;
     }
-    fs::copy(src, dir.join(&name)).map_err(err)?;
+    fs::write(dir.join(&name), &src_bytes).map_err(err)?;
     Ok(name)
 }
+
+/// File types that run code when opened. A link in a note (maybe in a map from
+/// someone else) must never start a program.
+const RUNNABLE: &[&str] = &[
+    "app", "command", "tool", "sh", "bash", "zsh", "csh", "ksh", "fish", "pkg", "mpkg", "scpt", "applescript",
+    "workflow", "terminal", "exe", "msi", "bat", "cmd", "com", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf",
+    "wsh", "hta", "scr", "lnk", "reg", "cpl", "msc", "jar", "appimage", "run", "desktop", "py", "pl", "rb",
+];
 
 /// Opens a file with the system's default app.
 #[tauri::command]
 fn open_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if let Some(ext) = p.extension() {
+        if RUNNABLE.contains(&ext.to_string_lossy().to_lowercase().as_str()) {
+            return Err("Ramify doesn't open programs or scripts. Use Finder / Explorer if you trust it.".into());
+        }
+    }
     app.opener().open_path(path, None::<&str>).map_err(err)
 }
 
@@ -228,6 +293,8 @@ pub fn run() {
             rename_file,
             trash_file,
             copy_into,
+            list_files,
+            remove_backup,
             open_path,
             open_url,
             http_request

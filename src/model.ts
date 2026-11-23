@@ -66,7 +66,8 @@ export function clone<T>(v: T): T {
 
 /** Fresh copy of a subtree with new ids (used for paste / duplicate). Anchors are dropped so they stay unique. */
 export function reId(n: MapNode): MapNode {
-  const c: MapNode = { ...n, id: newId(), children: n.children.map(reId) };
+  const { children, ...rest } = n;
+  const c: MapNode = { ...structuredClone(rest), id: newId(), children: children.map(reId) };
   delete c.anchor;
   return c;
 }

@@ -26,6 +26,7 @@ import { showMenu } from "./menu";
 import { Updater, autoCheckEnabled, setAutoCheck, appVersion, RELEASES_URL } from "./updater";
 import { openExternal } from "./notes";
 import { attachListEditing } from "./listedit";
+import { Backups, topicCount } from "./backups";
 import { TaskUI } from "./tasks-ui";
 import { GanttView } from "./gantt";
 
@@ -56,6 +57,7 @@ function today() {
 
 export class App {
   store: Store = createStore();
+  backups = new Backups(this.store);
   root: MapNode = makeNode("Untitled");
   frontmatter = "";
   fileName: string | null = null;
@@ -279,6 +281,11 @@ export class App {
   startEdit(id: string, caret: "end" | "start" | "all" | { replace: string } = "end") {
     const n = this.node(id);
     if (!n) return;
+    // Topics are edited on the map or in the outline; the Gantt view has no text to type into.
+    if (this.view === "gantt") {
+      this.view = "map";
+      this.render();
+    }
     if (this.editing && this.editing !== id) this.stopEdit();
     this.sel = id;
     if (this.editing !== id) {
@@ -302,7 +309,7 @@ export class App {
     if (this.view === "map") this.mapView.endEdit(id);
     else this.outline.endEdit(id);
     const l = find(this.root, id);
-    if (l && l.parent && !l.node.text.trim() && !l.node.children.length && !l.node.note && !opts.keepEmpty) {
+    if (l && l.parent && isBlank(l.node) && !opts.keepEmpty) {
       this.sel = remove(this.root, id);
       this.history.forgetEmptyEdit(this.root, id);
       this.markDirty();
@@ -481,6 +488,7 @@ export class App {
       const v = this.sink.value;
       this.sink.value = "";
       if (!v || !this.sel) return;
+      if (this.view === "gantt") return; // no topic text on screen to type into
       this.startEdit(this.sel, { replace: v });
     };
     this.sink.addEventListener("compositionstart", () => (composing = true));
@@ -775,11 +783,13 @@ export class App {
           const target = this.uniqueName(wanted, this.fileName);
           try {
             await this.store.rename(this.fileName, target);
+            await this.store.moveBackups(this.fileName, target);
             this.fileName = target;
           } catch {
             /* keep old name */
           }
         }
+        await this.backups.beforeSave(this.fileName, this.lastSaved, text);
         await this.store.write(this.fileName, text);
         this.lastSaved = text;
         localStorage.setItem("lm:last", this.fileName);
@@ -913,6 +923,8 @@ export class App {
       await this.refreshList();
       this.renderSidebar();
       if (text === this.lastSaved) return;
+      // Keep what we had, in case the other device's version is the wrong one.
+      await this.backups.snapshot(this.fileName, this.lastSaved);
       const selPath = this.sel ? indexPath(this.root, this.sel) : [];
       const focusPath = this.focusId ? indexPath(this.root, this.focusId) : null;
       this.history.push(this.root, this.sel);
@@ -945,6 +957,14 @@ export class App {
         },
       },
       ...(this.store.canReveal() ? [{ label: "Show folder", icon: icon("folder"), run: () => this.store.openFile(dirOf(name)) }] : []),
+      {
+        label: "Restore an earlier version…",
+        icon: icon("undo"),
+        run: async () => {
+          if (!isCur) await this.open(name);
+          await this.restoreVersion();
+        },
+      },
       { label: "Move to Trash", icon: icon("trash"), run: () => this.deleteMap(name), sep: true },
     ], () => this.focusSink());
   }
@@ -988,6 +1008,51 @@ export class App {
     }
     await this.newMap(root, undefined, false);
     this.toast("Imported " + f.name);
+  }
+
+  /** Pick an earlier version of the open map (from the automatic backups) and go back to it. */
+  async restoreVersion() {
+    if (!this.fileName) return this.toast("Save the map first");
+    await this.flush();
+    const name = this.fileName;
+    const times = await this.backups.list(name);
+    if (!times.length) return this.toast("No earlier versions of this map yet");
+    const nowCount = topicCount(this.lastSaved || serializeMarkdown(this.root, this.frontmatter));
+    const items: PaletteItem[] = [];
+    for (const t of times) {
+      let label = whenLabel(t);
+      let hint = "";
+      try {
+        const text = await this.backups.read(name, t);
+        const n = topicCount(text);
+        const d = n - nowCount;
+        hint = `${n} topics` + (d ? ` (${d > 0 ? "+" : ""}${d} vs now)` : "");
+        const firsts = parseMarkdown(text).root.children.slice(0, 4).map((c) => c.text.split("\n")[0]);
+        if (firsts.length) label += "  ·  " + firsts.join(", ").slice(0, 70);
+      } catch {
+        continue;
+      }
+      items.push({
+        label,
+        hint,
+        keys: "",
+        run: async () => {
+          const text = await this.backups.read(name, t);
+          await this.backups.snapshot(name, serializeMarkdown(this.root, this.frontmatter));
+          const parsed = parseMarkdown(text, baseOf(name).replace(/\.md$/i, ""));
+          this.mutate(() => {
+            this.root = parsed.root;
+            this.frontmatter = parsed.frontmatter;
+            this.mapLayout = layoutFrom(parsed.frontmatter);
+            this.focusId = null;
+            return parsed.root.id;
+          });
+          this.mapView.fit();
+          this.toast(`Restored the version from ${whenLabel(t)}. ${prettyChord("Mod+Z")} undoes it.`);
+        },
+      });
+    }
+    this.palette.open(items, "Restore an earlier version of this map", () => this.focusSink());
   }
 
   /** Delete a topic; say so when a whole branch goes, so ⌘Z is easy to reach for. */
@@ -1117,6 +1182,7 @@ export class App {
       { id: "daily", group: "Maps", title: "Today's daily note", keys: ["Mod+Shift+D"], navOnly: false, run: () => this.openDaily() },
       { id: "search-all", group: "Maps", title: "Search all maps…", keys: ["Mod+Shift+F"], navOnly: false, run: () => this.searchAllMaps() },
       { id: "new-folder", group: "Maps", title: "New folder…", run: () => this.newFolder() },
+      { id: "restore-version", group: "Maps", title: "Restore an earlier version…", run: () => this.restoreVersion() },
       { id: "move-map", group: "Maps", title: "Move map to folder…", keys: ["Mod+Shift+M"], navOnly: false, run: () => this.moveToFolder() },
       { id: "switch", group: "Maps", title: "Open map…", keys: ["Mod+P", "Mod+O"], navOnly: false, run: () => this.openSwitcher() },
       { id: "rename", group: "Maps", title: "Rename map", keys: ["Mod+R"], navOnly: false, run: () => this.startEdit(this.root.id, "all") },
@@ -1595,6 +1661,7 @@ export class App {
       const target = this.uniqueName((dir ? dir + "/" : "") + baseOf(this.fileName!), this.fileName!);
       try {
         await this.store.rename(this.fileName!, target);
+        await this.store.moveBackups(this.fileName!, target);
         this.fileName = target;
         localStorage.setItem("lm:last", target);
         await this.refreshList();
@@ -2128,4 +2195,23 @@ function demoMap(): MapNode {
   - ⌘⇧D daily note
 `,
   ).root;
+}
+
+/** "Today 16:38", "Yesterday 09:12", "Nov 20, 14:05". */
+function whenLabel(t: number): string {
+  const d = new Date(t);
+  const hm = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const today = new Date();
+  const y = new Date(today.getTime() - 86400000);
+  if (d.toDateString() === today.toDateString()) return `Today ${hm}`;
+  if (d.toDateString() === y.toDateString()) return `Yesterday ${hm}`;
+  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${hm}`;
+}
+
+/** A topic with no text and nothing else attached (safe to drop when editing ends). */
+function isBlank(n: MapNode): boolean {
+  return (
+    !n.text.trim() && !n.children.length && !n.note.trim() && !n.plan && !n.labels?.length && n.boundary === undefined &&
+    !n.links?.length && !n.xref && !n.anchor && !n.callout && !n.task && !n.summary
+  );
 }

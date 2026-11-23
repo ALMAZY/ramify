@@ -29,6 +29,8 @@ export interface HttpResult {
 }
 
 export const ATTACH_DIR = "attachments";
+/** Hidden folder (inside the maps folder) with earlier versions of every map. */
+export const HISTORY_DIR = ".ramify/history";
 
 export interface Store {
   kind: "desktop" | "browser";
@@ -46,6 +48,13 @@ export interface Store {
   /** Copy files given by absolute path (drag and drop) into attachments. */
   attachPaths(paths: string[]): Promise<string[]>;
   readBytes(rel: string): Promise<Uint8Array>;
+  /** Backup copies of a map (see backups.ts). `id` is the save time in ms. */
+  saveBackup(name: string, id: string, text: string): Promise<void>;
+  listBackups(name: string): Promise<string[]>;
+  readBackup(name: string, id: string): Promise<string>;
+  deleteBackup(name: string, id: string): Promise<void>;
+  /** Keep a map's backups when the map is renamed. */
+  moveBackups(from: string, to: string): Promise<void>;
   /** Write a binary file relative to the maps folder (desktop only). */
   writeBytes(rel: string, data: Uint8Array): Promise<void>;
   openFile(rel: string): Promise<void>;
@@ -123,6 +132,29 @@ class DesktopStore implements Store {
   makeFolder(rel: string) {
     return this.invoke<void>("make_dir", { path: this.path(rel) });
   }
+  private histDir(name: string) {
+    return `${HISTORY_DIR}/${name.replace(/\.md$/i, "")}`;
+  }
+  saveBackup(name: string, id: string, text: string) {
+    return this.invoke<void>("write_text", { path: this.path(`${this.histDir(name)}/${id}.md`), contents: text });
+  }
+  async listBackups(name: string) {
+    const files = await this.invoke<{ name: string }[]>("list_files", { dir: this.path(this.histDir(name)) });
+    return files.map((f) => f.name.match(/^(\d+)\.md$/)?.[1]).filter((x): x is string => !!x);
+  }
+  readBackup(name: string, id: string) {
+    return this.invoke<string>("read_text", { path: this.path(`${this.histDir(name)}/${id}.md`) });
+  }
+  deleteBackup(name: string, id: string) {
+    return this.invoke<void>("remove_backup", { path: this.path(`${this.histDir(name)}/${id}.md`) });
+  }
+  async moveBackups(from: string, to: string) {
+    try {
+      await this.invoke<void>("rename_file", { from: this.path(this.histDir(from)), to: this.path(this.histDir(to)) });
+    } catch {
+      /* no backups yet, or the target exists */
+    }
+  }
   async pickAttachments() {
     const { open } = await import("@tauri-apps/plugin-dialog");
     const picked = await open({ multiple: true, title: "Attach files" });
@@ -176,6 +208,7 @@ class DesktopStore implements Store {
 const PREFIX = "lm:file:";
 const ATT_PREFIX = "lm:att:";
 const DIR_PREFIX = "lm:dir:";
+const BAK_PREFIX = "lm:bak:";
 
 class BrowserStore implements Store {
   kind = "browser" as const;
@@ -231,6 +264,37 @@ class BrowserStore implements Store {
   }
   async makeFolder(rel: string) {
     localStorage.setItem(DIR_PREFIX + rel, "1");
+  }
+  async saveBackup(name: string, id: string, text: string) {
+    try {
+      localStorage.setItem(`${BAK_PREFIX}${name}\u0000${id}`, text);
+    } catch {
+      /* storage full: skip the backup rather than fail the save */
+    }
+  }
+  async listBackups(name: string) {
+    const out: string[] = [];
+    const pre = `${BAK_PREFIX}${name}\u0000`;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)!;
+      if (k.startsWith(pre)) out.push(k.slice(pre.length));
+    }
+    return out;
+  }
+  async readBackup(name: string, id: string) {
+    const v = localStorage.getItem(`${BAK_PREFIX}${name}\u0000${id}`);
+    if (v == null) throw new Error("Backup not found");
+    return v;
+  }
+  async deleteBackup(name: string, id: string) {
+    localStorage.removeItem(`${BAK_PREFIX}${name}\u0000${id}`);
+  }
+  async moveBackups(from: string, to: string) {
+    for (const id of await this.listBackups(from)) {
+      const v = localStorage.getItem(`${BAK_PREFIX}${from}\u0000${id}`);
+      if (v != null) localStorage.setItem(`${BAK_PREFIX}${to}\u0000${id}`, v);
+      localStorage.removeItem(`${BAK_PREFIX}${from}\u0000${id}`);
+    }
   }
   pickAttachments() {
     return new Promise<string[]>((resolve) => {

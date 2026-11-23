@@ -112,7 +112,7 @@ export class TaskUI {
   /** Give the selected topic task details: starts today, one day long. */
   addPlan() {
     const n = this.app.selNode;
-    if (!n) return;
+    if (!n) return this.app.toast("Select a topic first");
     if (!this.app.notesOpen) this.app.togglePanel(true);
     if (!n.plan) {
       const t = todayStr();

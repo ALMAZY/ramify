@@ -102,6 +102,7 @@ Light, dark and in between, with a live preview (`⌘⇧T`).
 | **Sync** | Your maps are files. Put the folder in iCloud Drive, Dropbox, OneDrive, Syncthing or git, and Ramify picks up changes from other devices live. |
 | **Offline** | Everything works offline. No account and no server. |
 | **Full undo** | Every change is reversible (`⌘Z` / `⌘⇧Z`). |
+| **Backups** | Earlier versions of every map are kept in a hidden `.ramify/history` folder (every 5 minutes while you work, plus right before a big deletion; 30 days). *Restore an earlier version…* brings one back. |
 
 ## Keyboard
 
@@ -193,6 +194,7 @@ ramify-layout: down
 - `<!--color:…-->`, `<!--shape:…-->`, `<!--collapsed-->` and `<!--link:id-->` are hidden in Obsidian's reading view.
 - `^id` at the end of an item is an Obsidian block id. Cross-links point to it.
 - Attachments are copied into an `attachments/` folder inside your maps folder.
+- Backups of earlier versions are in `.ramify/history/` inside your maps folder (hidden; Obsidian ignores it too).
 - `<!--plan:…-->` holds task details: `progress`, `priority` (1–5), `start` and `due` (YYYY-MM-DD), `who`, and `after` (ids of the topics it waits for).
 - `<!--labels:a|b-->`, `<!--boundary:label-->` (or `<!--boundary-->`), `<!--summary:N-->` (sums up the N topics before it), `<!--link:id: text-->` and `<!--xref:other-map.md#id-->` (a topic in another map).
 - `ramify-layout` and `ramify-lines` in the front matter store the map's layout and line style. Other front matter is kept as it is.
@@ -242,7 +244,6 @@ There's no UI framework, just TypeScript and DOM. Every action is a command in `
 
 ## Roadmap
 
-- [ ] Version history (browse and restore earlier versions)
 - [ ] winget (Windows) and Flathub (Linux) packages
 - [ ] Signed and notarized macOS build
 - [ ] iPad / mobile

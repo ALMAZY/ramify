@@ -183,6 +183,7 @@ function cleanText(raw: string): { text: string; collapsed: boolean; color?: str
   }
   t = t.replace(/<br\s*\/?>/gi, "\n").trim();
   if (/^\\\[[ xX]\]\s/.test(t)) t = t.slice(1);
+  t = t.replace(/&lt;(!--|br)/gi, "<$1").replace(/(\s)\\\^([A-Za-z0-9-]+)$/, "$1^$2");
   return { ...extra, text: t, collapsed, color, shape, anchor, links: links.length ? links : undefined, callout };
 }
 
@@ -220,14 +221,16 @@ export function parseMarkdown(src: string, fallbackTitle = "Untitled"): ParsedDo
     const h = line.match(HEAD_RE);
     if (h && !line.startsWith(" ") && !line.startsWith("\t")) {
       const level = h[1].length;
-      const cleaned = cleanText(h[2]);
-      let t = cleaned.text;
+      // Task box first, on the raw text, so an escaped "\[ ]" stays text.
+      let raw = h[2];
       let task: "todo" | "done" | undefined;
-      const tb = t.match(/^\[([ xX])\]\s+/);
+      const tb = raw.match(/^\[([ xX])\]\s+/);
       if (tb) {
         task = tb[1] === " " ? "todo" : "done";
-        t = t.slice(tb[0].length);
+        raw = raw.slice(tb[0].length);
       }
+      const cleaned = cleanText(raw);
+      const t = cleaned.text;
       if (level === 1 && !rootTitled && root.children.length === 0) {
         root.text = t;
         root.collapsed = false;
@@ -338,8 +341,15 @@ function suffix(n: MapNode, withFold: boolean, withAnchor = true): string {
   return s;
 }
 
+/** Topic text that can't be mistaken for Ramify's own markers when read back:
+ *  "<!--" and a literal "<br>" are written as "&lt;…", and a trailing " ^word"
+ *  (which Obsidian would read as a block id) as " \^word". */
+function escText(t: string): string {
+  return t.replace(/<(!--|br)/gi, "&lt;$1").replace(/(\s)\^([A-Za-z0-9-]+)(\s*)$/, "$1\\^$2$3");
+}
+
 function escItem(t: string): string {
-  let s = t.replace(/\n/g, "<br>");
+  let s = escText(t).replace(/\n/g, "<br>");
   // Keep text from being re-read as a task box or heading.
   if (/^\[[ xX]\]\s/.test(s)) s = "\\" + s;
   return s;
@@ -353,7 +363,7 @@ export function serializeMarkdown(root: MapNode, frontmatter = ""): string {
   const out: string[] = [];
   if (frontmatter) out.push(frontmatter.replace(/\n$/, ""));
   const rbox = root.task === "todo" ? "[ ] " : root.task === "done" ? "[x] " : "";
-  out.push(`# ${rbox}${root.text.replace(/\n/g, " ") || "Untitled"}${suffix(root, false)}`);
+  out.push(`# ${rbox}${escItem(root.text.replace(/\n/g, " ")) || "Untitled"}${suffix(root, false)}`);
   if (root.note.trim()) {
     out.push("");
     out.push(...quote(root.note, ""));

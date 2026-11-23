@@ -3,6 +3,22 @@
 All notable changes to Ramify. The section for each version is shown in the
 release notes and in the in-app update banner.
 
+## [0.3.2] — 2026-11-23
+
+### New
+- **Automatic backups.** Before a map is saved, the previous version is copied to a hidden `.ramify/history` folder in your maps folder: at most every 5 minutes while you work, and at once when a save would remove many topics. Ramify keeps every copy from the last hour, one per hour for a day and one per day for 30 days.
+- **Restore an earlier version…** (command palette, or ⋯ / right-click on a map in the sidebar) lists the copies with their time and topic count. Restoring can be undone with ⌘Z.
+
+### Fixed
+- Topic text ending in " ^word" (like "price ^2") lost that part when the map was read back. Text containing "<!--" or a literal "<br>" was also changed.
+- A central topic whose text starts with "[ ]" no longer turns into a checkbox.
+- Typing while the Gantt view was open changed the selected topic's text without showing it.
+- Clearing the text of a topic that has task details, labels, a boundary or links no longer deletes the topic.
+- A duplicated or pasted branch shared its task details with the original in memory.
+- Attaching the same file twice no longer makes a second copy.
+- Links in notes no longer open programs or scripts.
+- "Add task" in the Gantt view says to select a topic first instead of doing nothing.
+
 ## [0.3.1] — 2026-11-23
 
 ### Fixed
