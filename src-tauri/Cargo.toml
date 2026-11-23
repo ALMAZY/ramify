@@ -1,6 +1,6 @@
 [package]
 name = "ramify"
-version = "0.3.0"
+version = "0.3.1"
 description = "Keyboard-first mind map for fast notes"
 license = "MIT"
 authors = ["ALMAZY"]

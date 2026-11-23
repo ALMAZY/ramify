@@ -413,6 +413,22 @@ export class App {
     const c = chord(e);
     const inNotes = document.activeElement === $("notes-text");
     const inFilter = document.activeElement === $("sb-filter");
+    // Any other text field (task details, Gantt table, settings…): its keys are
+    // for the field. Backspace there must never delete topics.
+    const ae = document.activeElement as HTMLElement | null;
+    const inField =
+      !!ae &&
+      ae !== this.sink &&
+      !inNotes &&
+      !inFilter &&
+      !this.editing &&
+      (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement || ae instanceof HTMLSelectElement || ae.isContentEditable);
+    if (inField && c === "Escape") {
+      e.preventDefault();
+      ae.blur();
+      this.focusSink();
+      return;
+    }
     if (inNotes && c === "Escape" && this.notesFull) {
       e.preventDefault();
       this.closeFullNotes();
@@ -437,7 +453,7 @@ export class App {
       }
       return;
     }
-    const typing = !!this.editing || inNotes;
+    const typing = !!this.editing || inNotes || inField;
     const list = this.byChord.get(c);
     if (list) {
       const cmd = list.find((x) => !(typing && x.navOnly !== false));
@@ -974,6 +990,17 @@ export class App {
     this.toast("Imported " + f.name);
   }
 
+  /** Delete a topic; say so when a whole branch goes, so ⌘Z is easy to reach for. */
+  deleteTopic(id: string) {
+    const n = this.node(id);
+    if (!n) return;
+    let count = 0;
+    walk(n, () => void count++);
+    const name = (n.text.split("\n")[0] || "topic").slice(0, 40);
+    this.mutate(() => remove(this.root, id));
+    if (count > 1) this.toast(`Deleted “${name}” and ${count - 1} sub-topic${count > 2 ? "s" : ""}. ${prettyChord("Mod+Z")} brings ${count > 2 ? "them" : "it"} back.`);
+  }
+
   /** The map as an SVG string (same as Export → SVG). */
   mapSVG(): string {
     return exportSVG(this);
@@ -1011,7 +1038,7 @@ export class App {
       { id: "add-sibling", group: "Topics", title: "New topic below", keys: ["Enter"], run: () => this.mutate(() => addSibling(this.root, sel()), { edit: true }) },
       { id: "add-sibling-above", group: "Topics", title: "New topic above", keys: ["Shift+Enter"], run: () => this.mutate(() => addSibling(this.root, sel(), true), { edit: true }) },
       { id: "edit", group: "Topics", title: "Edit topic", keys: ["Space", "F2"], run: () => this.startEdit(sel(), "end") },
-      { id: "delete", group: "Topics", title: "Delete topic", keys: ["Backspace", "Delete"], run: () => !isTop() && this.mutate(() => remove(this.root, sel())) },
+      { id: "delete", group: "Topics", title: "Delete topic", keys: ["Backspace", "Delete"], run: () => !isTop() && this.deleteTopic(sel()) },
       { id: "indent", group: "Topics", title: "Move into previous topic", keys: ["Alt+ArrowRight"], run: () => this.mutate(() => void indent(this.root, sel())) },
       { id: "outdent", group: "Topics", title: "Move out one level", keys: ["Alt+ArrowLeft"], run: () => this.mutate(() => void outdent(this.root, sel())) },
       { id: "move-up", group: "Topics", title: "Move topic up", keys: ["Alt+ArrowUp"], run: () => this.mutate(() => void moveSibling(this.root, sel(), -1)) },

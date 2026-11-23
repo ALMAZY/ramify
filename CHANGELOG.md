@@ -3,9 +3,11 @@
 All notable changes to Ramify. The section for each version is shown in the
 release notes and in the in-app update banner.
 
-## [0.3.1]
+## [0.3.1] — 2026-11-23
 
 ### Fixed
+- **Backspace in a text field of the style panel or the Gantt table (assignee, dates, days) deleted topics on the map.** Fields now keep their keys; Esc returns to the map.
+- Deleting a topic with sub-topics now says how many went, and that ⌘Z brings them back.
 - Graphite theme: topic colours now match their names (orange was shown blue).
 - Outline view: note previews show plain text instead of Markdown marks.
 - Release builds stay hidden until every platform is ready, so "Check for updates" never fails half-way through a release.
